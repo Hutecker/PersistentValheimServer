@@ -19,6 +19,7 @@ ENV/
 *.swp
 *.swo
 *~
+.local-vars
 
 # OS
 .DS_Store
