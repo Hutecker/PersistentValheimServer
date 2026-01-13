@@ -31,4 +31,10 @@
       <CopyToPublishDirectory>Never</CopyToPublishDirectory>
     </None>
   </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="ValheimServerFunctions.Tests/**" />
+    <Content Remove="ValheimServerFunctions.Tests/**" />
+    <EmbeddedResource Remove="ValheimServerFunctions.Tests/**" />
+    <None Remove="ValheimServerFunctions.Tests/**" />
+  </ItemGroup>
 </Project>

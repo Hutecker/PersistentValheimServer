@@ -316,6 +316,28 @@ try {
         throw "Failed to build project"
     }
     
+    # Run tests if test project exists
+    if (Test-Path "ValheimServerFunctions.Tests\ValheimServerFunctions.Tests.csproj") {
+        Write-Host "`nRunning tests..." -ForegroundColor Yellow
+        try {
+            # Build and test (don't use --no-build since we need to build the test project)
+            $testOutput = dotnet test ValheimServerFunctions.Tests\ValheimServerFunctions.Tests.csproj --configuration Release --verbosity minimal 2>&1
+            $testExitCode = $LASTEXITCODE
+            
+            if ($testExitCode -eq 0) {
+                Write-Host "✅ All tests passed!" -ForegroundColor Green
+            } else {
+                Write-Host "⚠️  Some tests failed. Exit code: $testExitCode" -ForegroundColor Yellow
+                Write-Host "   Test output:" -ForegroundColor Gray
+                $testOutput | Where-Object { $_ -notmatch "warning NU1603" } | Select-Object -Last 10 | ForEach-Object { Write-Host "   $_" -ForegroundColor Gray }
+                Write-Host "   Continuing with deployment. Fix test issues before next deployment." -ForegroundColor Gray
+            }
+        } catch {
+            Write-Host "⚠️  Could not run tests: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "   Continuing with deployment..." -ForegroundColor Gray
+        }
+    }
+    
     # Publish project (required to generate functions.metadata)
     Write-Host "Publishing project..." -ForegroundColor Yellow
     dotnet publish --configuration Release --no-build --output "bin\Release\net8.0\publish" --self-contained false
