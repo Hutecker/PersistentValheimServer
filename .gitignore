@@ -20,6 +20,7 @@ ENV/
 *.swo
 *~
 .local-vars
+*.vs/
 
 # OS
 .DS_Store
