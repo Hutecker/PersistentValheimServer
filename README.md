@@ -32,40 +32,53 @@ This solution uses:
 - Azure subscription
 - Azure CLI installed and logged in
 - .NET 8.0 SDK installed
-- Azure Functions Core Tools installed
-- Discord bot token (create at https://discord.com/developers/applications)
-- PowerShell execution policy configured (see [DEPLOYMENT_TROUBLESHOOTING.md](DEPLOYMENT_TROUBLESHOOTING.md))
+- Discord bot token and public key (create at https://discord.com/developers/applications)
+- PowerShell execution policy configured:
+  ```powershell
+  Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+  ```
 
 ## Quick Start
 
-### 1. Deploy Infrastructure
+### 1. Create Discord Bot
 
-```bash
-# Set your variables
-export RESOURCE_GROUP="valheim-server-rg"
-export LOCATION="eastus"
-export DISCORD_BOT_TOKEN="your-discord-bot-token"
-export SERVER_PASSWORD="your-server-password"
-export SERVER_NAME="YourServerName"
+1. Go to https://discord.com/developers/applications
+2. Create a new application
+3. Go to **Bot** section → Click **Add Bot** → Copy the **Bot Token**
+4. Go to **General Information** → Copy the **Public Key** (64-character hex string)
+5. Go to **OAuth2 → URL Generator**:
+   - Select scopes: `bot`, `applications.commands`
+   - Select permissions: Send Messages, Use Slash Commands
+   - Copy the URL and open it to invite the bot to your server
 
-# Deploy
-cd infrastructure
-az deployment sub create \
-  --location $LOCATION \
-  --template-file main.bicep \
-  --parameters resourceGroupName=$RESOURCE_GROUP \
-               location=$LOCATION \
-               discordBotToken=$DISCORD_BOT_TOKEN \
-               serverPassword=$SERVER_PASSWORD \
-               serverName=$SERVER_NAME
+### 2. Deploy Infrastructure
+
+Run the deployment script:
+
+```powershell
+.\scripts\deploy.ps1 `
+  -ResourceGroupName "valheim-server-rg" `
+  -Location "eastus" `
+  -DiscordBotToken "YOUR_BOT_TOKEN" `
+  -DiscordPublicKey "YOUR_PUBLIC_KEY" `
+  -ServerPassword "YOUR_SERVER_PASSWORD" `
+  -ServerName "Your Server Name" `
+  -AutoShutdownMinutes 120
 ```
 
-### 2. Configure Discord Bot
+The script will:
+- Deploy all Azure infrastructure (Storage, Key Vault, Function App)
+- Build and deploy the Function App code
+- Configure app settings with Key Vault references
+- Set up managed identity and role assignments
 
-1. Create a Discord application at https://discord.com/developers/applications
-2. Create a bot and copy the token
-3. Invite bot to your server with `applications.commands` and `bot` scopes
-4. Set the webhook URL in Discord (from Function App output)
+### 3. Configure Discord Interactions Endpoint
+
+After deployment, set the interactions endpoint in Discord:
+
+1. Go to https://discord.com/developers/applications → Your Application → **Interactions**
+2. Set **Interaction Endpoint URL** to: `https://valheim-func.azurewebsites.net/api/DiscordBot`
+3. Register slash commands using the JSON shown at the end of deployment
 
 ### 3. Usage
 
@@ -76,30 +89,28 @@ In your Discord channel:
 
 The server will automatically shut down after the configured timeout (default: 2 hours).
 
-## Save Migration
-
-See `scripts/migrate-save.md` for instructions on migrating an existing Valheim world save.
-
 ## Project Structure
 
 ```
 .
 ├── infrastructure/          # Bicep IaC templates
-│   ├── main.bicep         # Main deployment template
-│   └── modules/           # Reusable modules
+│   └── main.bicep         # Main deployment template
 ├── functions/              # Azure Functions
 │   ├── DiscordBot/        # Discord command handler
-│   └── AutoShutdown/      # Timer-triggered shutdown
-├── scripts/               # Utility scripts
-│   └── migrate-save.md    # Save migration guide
-└── README.md              # This file
+│   ├── AutoShutdown/     # Timer-triggered shutdown
+│   └── ValheimServerFunctions.Tests/  # Unit tests
+└── scripts/               # Deployment scripts
+    ├── deploy.ps1         # Main deployment script
+    └── cleanup-role-assignments.ps1  # Role assignment cleanup utility
 ```
 
-## Monitoring
+## Architecture
 
-- Application Insights dashboard for server metrics
-- Discord notifications for server start/stop events
-- Azure Monitor alerts for cost tracking
+- **Azure Container Instances (ACI)**: Runs Valheim server on-demand
+- **Azure File Share**: Persistent storage for world saves
+- **Azure Functions (Flex Consumption)**: Discord bot and auto-shutdown logic
+- **Azure Key Vault**: Secure storage for secrets (accessed via Key Vault references)
+- **Managed Identity**: System-assigned identity for secure resource access
 
 ## Cost Estimates
 
@@ -109,19 +120,5 @@ See `scripts/migrate-save.md` for instructions on migrating an existing Valheim 
 
 ## References
 
-- [Valheim Dedicated Server Guide (Fandom)](https://valheim.fandom.com/wiki/Dedicated_servers)
-- [Official Valheim Dedicated Server Guide](https://www.valheimgame.com/support/a-guide-to-dedicated-servers/)
+- [Valheim Dedicated Server Guide](https://valheim.fandom.com/wiki/Dedicated_servers)
 - [Docker Image: lloesche/valheim-server](https://hub.docker.com/r/lloesche/valheim-server)
-
-## Documentation
-
-- [SETUP.md](SETUP.md) - Complete setup guide
-- [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture details
-- [VALHEIM_SERVER_CONFIG.md](VALHEIM_SERVER_CONFIG.md) - Valheim server configuration details
-- [MANAGED_IDENTITY.md](MANAGED_IDENTITY.md) - Managed identity configuration and security
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
-- [QUICK_REFERENCE.md](QUICK_REFERENCE.md) - Quick command reference
-
-## Troubleshooting
-
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues and solutions.

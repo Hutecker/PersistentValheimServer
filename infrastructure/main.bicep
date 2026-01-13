@@ -28,16 +28,13 @@ param containerCpu int = 2
 @description('Container memory in GB')
 param containerMemory int = 4
 
-// Standardized naming: use short hash of resource group for consistency
-// This ensures deterministic naming while keeping names short
-var resourceSuffix = substring(uniqueString(resourceGroup().id), 0, 8)
-var storageAccountName = 'valheim${resourceSuffix}'
+var storageAccountName = 'valheimsa'
 var fileShareName = 'valheim-worlds'
-// Function App is created via CLI with standardized name 'valheim-func-flex' (not in Bicep)
-// Application Insights is automatically created with the Function App (not in Bicep)
-var keyVaultName = 'valheim-kv-${resourceSuffix}'
+var keyVaultName = 'valheim-kv'
 var containerGroupName = 'valheim-server'
-var functionStorageAccountName = 'valheimfunc${resourceSuffix}'
+var functionStorageAccountName = 'valheimfuncsa'
+var functionAppName = 'valheim-func'
+var appInsightsName = 'valheim-func-insights'
 
 // Storage Account for world saves
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -118,9 +115,16 @@ resource discordPublicKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' =
   }
 }
 
-// Application Insights is automatically created when the Function App is created via CLI
-// No need to create it separately in Bicep - the Function App will have its own Application Insights
-// This prevents duplicate Application Insights resources
+// Application Insights for monitoring
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: appInsightsName
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    Request_Source: 'rest'
+  }
+}
 
 // Storage Account for Function App
 resource functionStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -136,22 +140,187 @@ resource functionStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' =
   }
 }
 
-// Flex Consumption Function App is created via Azure CLI in deploy.ps1
-// Bicep doesn't fully support Flex Consumption functionAppConfig yet
-// The Function App name is standardized to 'valheim-func-flex'
+// Blob container for Function App deployment (required for Flex Consumption)
+var deploymentContainerName = 'app-package-${toLower(take(functionAppName, 32))}'
 
-// Role assignments are created via Azure CLI in deploy.ps1 after the Function App is created
-// This is because:
-// 1. The Function App is created via CLI (Flex Consumption not fully supported in Bicep)
-// 2. Role assignments require the Function App's managed identity principal ID
-// 3. Azure doesn't allow updating existing role assignments, so they must be created after Function App creation
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
+  parent: functionStorageAccount
+  name: 'default'
+}
 
-// Outputs
-// Function App is created via CLI with standardized name 'valheim-func-flex'
-output functionAppName string = 'valheim-func-flex'
-output functionAppUrl string = 'https://valheim-func-flex.azurewebsites.net'
+resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobService
+  name: deploymentContainerName
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource functionAppHostingPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
+  name: '${functionAppName}-plan'
+  location: location
+  sku: {
+    name: 'FC1'
+    tier: 'FlexConsumption'
+  }
+  kind: 'functionapp'
+  properties: {
+    reserved: true
+  }
+}
+
+resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
+  name: functionAppName
+  location: location
+  kind: 'functionapp,linux'
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    serverFarmId: functionAppHostingPlan.id
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${functionStorageAccount.properties.primaryEndpoints.blob}${deploymentContainerName}'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: 100
+        instanceMemoryMB: 2048
+      }
+      runtime: {
+        name: 'dotnet-isolated'
+        version: '8.0'
+      }
+    }
+    siteConfig: {
+      appSettings: [
+        {
+          name: 'FUNCTIONS_EXTENSION_VERSION'
+          value: '~4'
+        }
+        {
+          name: 'SUBSCRIPTION_ID'
+          value: subscription().subscriptionId
+        }
+        {
+          name: 'RESOURCE_GROUP_NAME'
+          value: resourceGroup().name
+        }
+        {
+          name: 'SERVER_NAME'
+          value: serverName
+        }
+        {
+          name: 'STORAGE_ACCOUNT_NAME'
+          value: storageAccount.name
+        }
+        {
+          name: 'FILE_SHARE_NAME'
+          value: fileShareName
+        }
+        {
+          name: 'LOCATION'
+          value: location
+        }
+        {
+          name: 'AUTO_SHUTDOWN_MINUTES'
+          value: string(autoShutdownMinutes)
+        }
+        {
+          name: 'CONTAINER_GROUP_NAME'
+          value: containerGroupName
+        }
+        {
+          name: 'DISCORD_PUBLIC_KEY'
+          value: '@Microsoft.KeyVault(SecretUri=${keyVault.properties.vaultUri}secrets/DiscordPublicKey/)'
+        }
+        {
+          name: 'SERVER_PASSWORD'
+          value: '@Microsoft.KeyVault(SecretUri=${keyVault.properties.vaultUri}secrets/ServerPassword/)'
+        }
+        {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: appInsights.properties.ConnectionString
+        }
+      ]
+      use32BitWorkerProcess: false
+      http20Enabled: true
+      minTlsVersion: '1.2'
+    }
+    httpsOnly: true
+    reserved: true
+  }
+  dependsOn: [
+    deploymentContainer
+  ]
+}
+
+var keyVaultRoleDefId = '4633458b-17de-408a-b874-0445c86b69e6'
+var containerInstanceRoleDefId = '5d977122-f97e-4b4d-a52f-6b43003ddb4d'
+var storageAccountRoleDefId = '17d1049b-9a84-46fb-8f53-869881c3d3ab'
+var storageFileRoleDefId = 'a7264617-510b-434b-a828-9731dc254ea7'
+var storageBlobRoleDefId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+
+resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, functionApp.id, keyVaultRoleDefId)
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultRoleDefId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource containerInstanceRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(resourceGroup().id, functionApp.id, containerInstanceRoleDefId)
+  scope: resourceGroup()
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', containerInstanceRoleDefId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageAccountRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageAccountRoleDefId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageAccountRoleDefId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageFileRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageFileRoleDefId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageFileRoleDefId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource functionStorageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(functionStorageAccount.id, functionApp.id, storageBlobRoleDefId)
+  scope: functionStorageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobRoleDefId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+output functionAppName string = functionApp.name
+output functionAppUrl string = 'https://${functionApp.properties.defaultHostName}'
 output storageAccountName string = storageAccount.name
 output functionStorageAccountName string = functionStorageAccount.name
 output keyVaultName string = keyVaultName
 output containerGroupName string = containerGroupName
-// Application Insights is automatically created with the Function App
+output appInsightsName string = appInsights.name
+output appInsightsConnectionString string = appInsights.properties.ConnectionString

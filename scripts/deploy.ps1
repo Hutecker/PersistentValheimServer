@@ -1,5 +1,6 @@
 # Deployment Script for Valheim Server on Azure
-# This script automates the deployment of all infrastructure components
+# Infrastructure is managed via Bicep (infrastructure/main.bicep)
+# This script deploys the Bicep template and then builds/deploys Function App code
 #
 # If you get an execution policy error, run this first:
 # Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
@@ -31,13 +32,11 @@ param(
     [string]$SubscriptionId = ""
 )
 
-# Get script directory for cleanup script reference
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 Write-Host "Valheim Server Azure Deployment" -ForegroundColor Cyan
 Write-Host "================================" -ForegroundColor Cyan
 
-# Check Azure CLI
 try {
     $azVersion = az version --output json | ConvertFrom-Json
     Write-Host "Azure CLI version: $($azVersion.'azure-cli')" -ForegroundColor Green
@@ -46,7 +45,6 @@ try {
     exit 1
 }
 
-# Check if logged in
 try {
     $account = az account show --output json | ConvertFrom-Json
     if ($SubscriptionId -and $account.id -ne $SubscriptionId) {
@@ -59,13 +57,11 @@ try {
     exit 1
 }
 
-# Set subscription ID if not provided
 if (-not $SubscriptionId) {
     $account = az account show --output json | ConvertFrom-Json
     $SubscriptionId = $account.id
 }
 
-# Create resource group if it doesn't exist
 Write-Host "`nChecking resource group..." -ForegroundColor Yellow
 $rgExists = az group exists --name $ResourceGroupName --output tsv
 if ($rgExists -eq "false") {
@@ -76,28 +72,18 @@ if ($rgExists -eq "false") {
     Write-Host "Resource group already exists" -ForegroundColor Green
 }
 
-# Deploy infrastructure at resource group scope
-Write-Host "`nDeploying infrastructure..." -ForegroundColor Yellow
-$deploymentName = "valheim-deployment-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+    Write-Host "`nDeploying infrastructure..." -ForegroundColor Yellow
+    $deploymentName = "valheim-deployment-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 
-# Check for previous failed deployments with role assignment issues
-Write-Host "Checking for previous failed deployments..." -ForegroundColor Yellow
-$recentFailed = az deployment group list --resource-group $ResourceGroupName --query "[?properties.provisioningState=='Failed' && contains(properties.error.code, 'RoleAssignment')].name" -o tsv 2>$null | Select-Object -First 1
-if ($recentFailed) {
-    Write-Host "  Found failed deployment with role assignment issues: $recentFailed" -ForegroundColor Yellow
-    Write-Host "  This deployment will be skipped - using Incremental mode" -ForegroundColor Gray
-}
 
-# Always use Incremental mode to avoid conflicts with existing resources
-# This ensures resources not in the template are left alone
-Write-Host "Using Incremental deployment mode (preserves existing resources not in template)" -ForegroundColor Gray
+    Write-Host "Using Incremental deployment mode (preserves existing resources not in template)" -ForegroundColor Gray
 
-try {
-    $deployOutput = az deployment group create `
-        --resource-group $ResourceGroupName `
-        --name $deploymentName `
-        --template-file "infrastructure/main.bicep" `
-        --mode Incremental `
+    try {
+        $deployOutput = az deployment group create `
+            --resource-group $ResourceGroupName `
+            --name $deploymentName `
+            --template-file "infrastructure/main.bicep" `
+            --mode Incremental `
         --parameters resourceGroupName=$ResourceGroupName `
                      location=$Location `
                      discordBotToken=$DiscordBotToken `
@@ -107,48 +93,19 @@ try {
                      autoShutdownMinutes=$AutoShutdownMinutes `
         --output json 2>&1
     
-    # Check for role assignment errors specifically
-    $deployOutputString = $deployOutput | Out-String
-    if ($deployOutputString -match "RoleAssignmentUpdateNotPermitted") {
-        Write-Host "`n⚠️  Role assignment update errors detected" -ForegroundColor Yellow
-        Write-Host "This happens when old role assignments exist from previous deployments." -ForegroundColor Gray
-        Write-Host "Role assignments are now managed via Azure CLI, not Bicep." -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "Attempting to clean up old role assignments..." -ForegroundColor Yellow
-        
-        # Try to clean up old role assignments automatically
-        $cleanupScript = Join-Path $scriptDir "cleanup-role-assignments.ps1"
-        if (Test-Path $cleanupScript) {
-            Write-Host "Running cleanup script..." -ForegroundColor Gray
-            & $cleanupScript -ResourceGroupName $ResourceGroupName -Force
-        } else {
-            Write-Host "Cleanup script not found at: $cleanupScript" -ForegroundColor Yellow
-            Write-Host "Please run manually: .\scripts\cleanup-role-assignments.ps1 -ResourceGroupName $ResourceGroupName -Force" -ForegroundColor Yellow
-        }
-        
-        Write-Host "`nRetrying deployment..." -ForegroundColor Yellow
-        $deployOutput = az deployment group create `
-            --resource-group $ResourceGroupName `
-            --name $deploymentName `
-            --template-file "infrastructure/main.bicep" `
-            --mode Incremental `
-            --parameters resourceGroupName=$ResourceGroupName `
-                         location=$Location `
-                         discordBotToken=$DiscordBotToken `
-                         discordPublicKey=$DiscordPublicKey `
-                         serverPassword=$ServerPassword `
-                         serverName=$ServerName `
-                         autoShutdownMinutes=$AutoShutdownMinutes `
-            --output json 2>&1
-        
         $deployOutputString = $deployOutput | Out-String
         if ($deployOutputString -match "RoleAssignmentUpdateNotPermitted") {
-            Write-Host "`n❌ Still getting role assignment errors after cleanup." -ForegroundColor Red
-            Write-Host "Please run this manually and then retry deployment:" -ForegroundColor Yellow
-            Write-Host "  .\scripts\cleanup-role-assignments.ps1 -ResourceGroupName $ResourceGroupName -Force" -ForegroundColor Gray
-            throw "Deployment failed due to role assignment conflicts"
+            Write-Host "`n⚠️  Role assignment update errors detected" -ForegroundColor Yellow
+            Write-Host "This happens when old role assignments exist from previous deployments." -ForegroundColor Gray
+            Write-Host "Role assignments are now managed in Bicep, but old ones need to be cleaned up first." -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "To fix this, delete the conflicting role assignments in the Azure Portal:" -ForegroundColor Yellow
+            Write-Host "  1. Go to the resource group: $ResourceGroupName" -ForegroundColor Gray
+            Write-Host "  2. Navigate to 'Access control (IAM)'" -ForegroundColor Gray
+            Write-Host "  3. Remove any role assignments for the Function App's managed identity" -ForegroundColor Gray
+            Write-Host "  4. Retry the deployment" -ForegroundColor Gray
+            throw "Deployment failed due to role assignment conflicts. Clean up old role assignments and retry."
         }
-    }
     
     if ($LASTEXITCODE -ne 0) {
         throw "Deployment failed with exit code $LASTEXITCODE"
@@ -164,7 +121,6 @@ try {
     exit 1
 }
 
-# Get deployment outputs
 Write-Host "`nRetrieving deployment outputs..." -ForegroundColor Yellow
 $outputs = az deployment group show `
     --resource-group $ResourceGroupName `
@@ -172,126 +128,15 @@ $outputs = az deployment group show `
     --query "properties.outputs" `
     --output json | ConvertFrom-Json
 
-# Use standardized Function App name (not from Bicep outputs)
-$functionAppName = "valheim-func-flex"
-$storageAccountName = $outputs.storageAccountName.value
-$functionStorageAccountName = $outputs.functionStorageAccountName.value
+$functionAppName = $outputs.functionAppName.value
+$functionAppUrl = $outputs.functionAppUrl.value
 
 Write-Host "Deployment outputs:" -ForegroundColor Green
-Write-Host "  Function App Name: $functionAppName (standardized)"
-Write-Host "  Storage Account: $storageAccountName"
-Write-Host "  Function Storage Account: $functionStorageAccountName"
+Write-Host "  Function App: $functionAppName"
+Write-Host "  Function App URL: $functionAppUrl"
+Write-Host "  Storage Account: $($outputs.storageAccountName.value)"
+Write-Host "  Key Vault: $($outputs.keyVaultName.value)"
 
-# Check for existing Flex Consumption Function App
-Write-Host "`nChecking for existing Flex Consumption Function App..." -ForegroundColor Yellow
-$existingFlexApp = az functionapp show --name $functionAppName --resource-group $ResourceGroupName --output json 2>$null | ConvertFrom-Json
-
-if ($existingFlexApp) {
-    Write-Host "Found existing Flex Consumption Function App: $functionAppName" -ForegroundColor Green
-} else {
-    Write-Host "Flex Consumption Function App not found. Creating new one..." -ForegroundColor Yellow
-    Write-Host "  Creating: $functionAppName" -ForegroundColor Gray
-    
-    az functionapp create `
-        --name $functionAppName `
-        --resource-group $ResourceGroupName `
-        --storage-account $functionStorageAccountName `
-        --flexconsumption-location $Location `
-        --runtime "dotnet-isolated" `
-        --runtime-version "8" `
-        --functions-version "4" `
-        --output none 2>&1 | Out-Null
-    
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "Flex Consumption Function App created successfully: $functionAppName" -ForegroundColor Green
-    } else {
-        throw "Failed to create Flex Consumption Function App. Please check Azure CLI output above."
-    }
-}
-
-# Enable System-Assigned Managed Identity (if not already enabled)
-Write-Host "Enabling managed identity..." -ForegroundColor Yellow
-az functionapp identity assign --name $functionAppName --resource-group $ResourceGroupName --output none 2>&1 | Out-Null
-
-# Get managed identity principal ID
-$principalId = az functionapp identity show --name $functionAppName --resource-group $ResourceGroupName --query "principalId" -o tsv 2>$null
-
-if ($principalId) {
-    $keyVaultName = $outputs.keyVaultName.value
-    
-    # Check and create missing role assignments
-    Write-Host "Verifying role assignments..." -ForegroundColor Yellow
-    
-    # Key Vault access (required for Key Vault references in app settings)
-    $kvAssignment = az role assignment list --assignee $principalId --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.KeyVault/vaults/$keyVaultName" --query "[?roleDefinitionId=='/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6']" -o tsv 2>$null
-    if (-not $kvAssignment) {
-        Write-Host "Granting Key Vault access (required for Key Vault references)..." -ForegroundColor Yellow
-        az role assignment create `
-            --role "Key Vault Secrets User" `
-            --assignee-object-id $principalId `
-            --assignee-principal-type ServicePrincipal `
-            --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.KeyVault/vaults/$keyVaultName" `
-            --output none 2>&1 | Out-Null
-    }
-    
-    # Container Instance access
-    $aciAssignment = az role assignment list --assignee $principalId --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName" --query "[?roleDefinitionId=='/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/5d977122-f97e-4b4d-a52f-6b43003ddb4d']" -o tsv 2>$null
-    if (-not $aciAssignment) {
-        Write-Host "Granting Container Instance access..." -ForegroundColor Yellow
-        az role assignment create `
-            --role "Azure Container Instances Contributor Role" `
-            --assignee-object-id $principalId `
-            --assignee-principal-type ServicePrincipal `
-            --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName" `
-            --output none 2>&1 | Out-Null
-    }
-    
-    # Storage Account access
-    $saAssignment = az role assignment list --assignee $principalId --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Storage/storageAccounts/$storageAccountName" --query "[?roleDefinitionId=='/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/17d1049b-9a84-46fb-8f53-869881c3d3ab']" -o tsv 2>$null
-    if (-not $saAssignment) {
-        Write-Host "Granting Storage Account access..." -ForegroundColor Yellow
-        az role assignment create `
-            --role "Storage Account Contributor" `
-            --assignee-object-id $principalId `
-            --assignee-principal-type ServicePrincipal `
-            --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Storage/storageAccounts/$storageAccountName" `
-            --output none 2>&1 | Out-Null
-    }
-    
-    # Storage File access
-    $fileAssignment = az role assignment list --assignee $principalId --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Storage/storageAccounts/$storageAccountName" --query "[?roleDefinitionId=='/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/a7264617-510b-434b-a828-9731dc254ea7']" -o tsv 2>$null
-    if (-not $fileAssignment) {
-        Write-Host "Granting Storage File access..." -ForegroundColor Yellow
-        az role assignment create `
-            --role "Storage File Data SMB Share Elevated Contributor" `
-            --assignee-object-id $principalId `
-            --assignee-principal-type ServicePrincipal `
-            --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Storage/storageAccounts/$storageAccountName" `
-            --output none 2>&1 | Out-Null
-    }
-    
-    # Function Storage Account access
-    $funcStorageAssignment = az role assignment list --assignee $principalId --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Storage/storageAccounts/$functionStorageAccountName" --query "[?roleDefinitionId=='/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe']" -o tsv 2>$null
-    if (-not $funcStorageAssignment) {
-        Write-Host "Granting Function Storage Account access..." -ForegroundColor Yellow
-        az role assignment create `
-            --role "Storage Blob Data Contributor" `
-            --assignee-object-id $principalId `
-            --assignee-principal-type ServicePrincipal `
-            --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Storage/storageAccounts/$functionStorageAccountName" `
-            --output none 2>&1 | Out-Null
-    }
-    
-    Write-Host "Role assignments verified" -ForegroundColor Green
-} else {
-    Write-Host "Warning: Could not retrieve managed identity principal ID" -ForegroundColor Yellow
-}
-
-Write-Host "`nUsing Function App: $functionAppName" -ForegroundColor Cyan
-
-$functionAppUrl = "https://$functionAppName.azurewebsites.net"
-
-# Deploy Function App code
 Write-Host "`nDeploying Function App code..." -ForegroundColor Yellow
 Push-Location functions
 
@@ -303,7 +148,6 @@ try {
     }
     Write-Host ".NET SDK version: $dotnetVersion" -ForegroundColor Green
     
-    # Restore and build
     Write-Host "Restoring NuGet packages..." -ForegroundColor Yellow
     dotnet restore
     if ($LASTEXITCODE -ne 0) {
@@ -316,11 +160,9 @@ try {
         throw "Failed to build project"
     }
     
-    # Run tests if test project exists
     if (Test-Path "ValheimServerFunctions.Tests\ValheimServerFunctions.Tests.csproj") {
         Write-Host "`nRunning tests..." -ForegroundColor Yellow
         try {
-            # Build and test (don't use --no-build since we need to build the test project)
             $testOutput = dotnet test ValheimServerFunctions.Tests\ValheimServerFunctions.Tests.csproj --configuration Release --verbosity minimal 2>&1
             $testExitCode = $LASTEXITCODE
             
@@ -338,14 +180,12 @@ try {
         }
     }
     
-    # Publish project (required to generate functions.metadata)
     Write-Host "Publishing project..." -ForegroundColor Yellow
     dotnet publish --configuration Release --no-build --output "bin\Release\net8.0\publish" --self-contained false
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to publish project"
     }
     
-    # Verify critical files exist
     Write-Host "Verifying published files..." -ForegroundColor Yellow
     $publishDir = "bin\Release\net8.0\publish"
     $requiredFiles = @("host.json", "ValheimServerFunctions.dll", "functions.metadata", "extensions.json")
@@ -358,19 +198,14 @@ try {
     }
     Write-Host "✅ All required files present" -ForegroundColor Green
     
-    # Deploy Function App code using Azure CLI (no func tools needed)
     Write-Host "Creating deployment package..." -ForegroundColor Yellow
     
-    # Create a zip file with the published output
     $zipFile = "..\function-app-deploy.zip"
     
-    # Remove old zip if exists
     if (Test-Path $zipFile) {
         Remove-Item $zipFile -Force
     }
     
-    # Create zip file with Linux-compatible paths (forward slashes)
-    # Windows Compress-Archive uses backslashes which Linux can't read properly
     Write-Host "Creating deployment ZIP with Linux-compatible paths..." -ForegroundColor Yellow
     Write-Host "  Source: $publishDir" -ForegroundColor Gray
     
@@ -384,7 +219,6 @@ try {
     
     $files = Get-ChildItem $publishDirResolved -Recurse -File
     foreach ($file in $files) {
-        # Use forward slashes for Linux compatibility
         $relativePath = $file.FullName.Substring($publishDirResolved.Path.Length + 1).Replace("\", "/")
         $entry = $archive.CreateEntry($relativePath)
         $entryStream = $entry.Open()
@@ -409,7 +243,6 @@ try {
     Write-Host "  The deployment is actually proceeding in the background. We'll verify completion separately." -ForegroundColor Gray
     Write-Host ""
     
-    # Start deployment in background job to prevent hanging
     $deploymentJob = Start-Job -ScriptBlock {
         param($rg, $name, $zip)
         $output = az functionapp deployment source config-zip `
@@ -423,16 +256,14 @@ try {
     Write-Host "  Deployment started (running in background)..." -ForegroundColor Gray
     Write-Host "  Waiting for deployment to complete (max 5 minutes)..." -ForegroundColor Gray
     
-    # Wait for deployment with timeout, checking periodically
-    $timeout = 300 # 5 minutes
+    $timeout = 300
     $elapsed = 0
-    $checkInterval = 15 # Check every 15 seconds
+    $checkInterval = 15
     
     while ($elapsed -lt $timeout) {
         Start-Sleep -Seconds $checkInterval
         $elapsed += $checkInterval
         
-        # Check if job completed
         if ($deploymentJob.State -eq "Completed") {
             $deployOutput = Receive-Job -Job $deploymentJob
             Remove-Job -Job $deploymentJob
@@ -440,7 +271,6 @@ try {
             break
         }
         
-        # Check if deployment actually succeeded by verifying functions
         Write-Host "  Checking deployment status... ($elapsed seconds)" -ForegroundColor Gray
         $functions = az functionapp function list --name $functionAppName --resource-group $ResourceGroupName --output json 2>$null | ConvertFrom-Json
         
@@ -452,14 +282,12 @@ try {
         }
     }
     
-    # If job is still running after timeout, stop it and verify manually
     if ($deploymentJob.State -eq "Running") {
         Write-Host "  ⚠️  Deployment command timed out, but checking if deployment actually succeeded..." -ForegroundColor Yellow
         Stop-Job -Job $deploymentJob -ErrorAction SilentlyContinue
         Remove-Job -Job $deploymentJob -ErrorAction SilentlyContinue
     }
     
-    # Final verification
     Write-Host "`nVerifying deployment..." -ForegroundColor Cyan
     Start-Sleep -Seconds 5
     $functions = az functionapp function list --name $functionAppName --resource-group $ResourceGroupName --output json 2>$null | ConvertFrom-Json
@@ -475,7 +303,6 @@ try {
         Write-Host "   Deployment may still be in progress - check the Azure Portal for status." -ForegroundColor Gray
     }
     
-    # Clean up deployment zip file
     if (Test-Path $zipFile) {
         Write-Host "Cleaning up deployment ZIP file..." -ForegroundColor Gray
         Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
@@ -486,101 +313,8 @@ try {
     Write-Host "Error deploying Function App: $_" -ForegroundColor Red
     Pop-Location
     Write-Host "`nNote: Infrastructure is deployed. You can deploy Function App code manually later." -ForegroundColor Yellow
-    # Don't exit - let the script continue to show next steps
 }
 
-# Ensure secrets exist in Key Vault, then configure Function App settings with Key Vault references
-Write-Host "`nConfiguring Function App settings with Key Vault references..." -ForegroundColor Yellow
-$keyVaultName = $outputs.keyVaultName.value
-
-# Ensure secrets exist in Key Vault (add them if they don't exist)
-Write-Host "Ensuring secrets exist in Key Vault..." -ForegroundColor Gray
-
-# Check if DiscordPublicKey exists, add if not
-$existingDiscordKey = az keyvault secret show --vault-name $keyVaultName --name "DiscordPublicKey" --query "value" -o tsv 2>$null
-if (-not $existingDiscordKey) {
-    Write-Host "  Adding DiscordPublicKey to Key Vault..." -ForegroundColor Gray
-    az keyvault secret set `
-        --vault-name $keyVaultName `
-        --name "DiscordPublicKey" `
-        --value $DiscordPublicKey `
-        --output none 2>&1 | Out-Null
-} else {
-    Write-Host "  DiscordPublicKey already exists in Key Vault" -ForegroundColor Gray
-}
-
-# Check if ServerPassword exists, add if not
-$existingServerPassword = az keyvault secret show --vault-name $keyVaultName --name "ServerPassword" --query "value" -o tsv 2>$null
-if (-not $existingServerPassword) {
-    Write-Host "  Adding ServerPassword to Key Vault..." -ForegroundColor Gray
-    az keyvault secret set `
-        --vault-name $keyVaultName `
-        --name "ServerPassword" `
-        --value $ServerPassword `
-        --output none 2>&1 | Out-Null
-} else {
-    Write-Host "  ServerPassword already exists in Key Vault" -ForegroundColor Gray
-}
-
-# Build Key Vault reference URIs
-# Format: @Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/<secret-name>/)
-$keyVaultUri = "https://$keyVaultName.vault.azure.net"
-$discordPublicKeyRef = "@Microsoft.KeyVault(SecretUri=$keyVaultUri/secrets/DiscordPublicKey/)"
-$serverPasswordRef = "@Microsoft.KeyVault(SecretUri=$keyVaultUri/secrets/ServerPassword/)"
-
-# Set all app settings (using Key Vault references for secrets)
-# Note: Key Vault references contain parentheses which need special handling in PowerShell
-Write-Host "Setting Function App app settings with Key Vault references..." -ForegroundColor Gray
-
-# Set regular app settings first
-Write-Host "  Setting regular app settings..." -ForegroundColor Gray
-az functionapp config appsettings set `
-    --resource-group $ResourceGroupName `
-    --name $functionAppName `
-    --settings `
-        "SUBSCRIPTION_ID=$SubscriptionId" `
-        "RESOURCE_GROUP_NAME=$ResourceGroupName" `
-        "SERVER_NAME=$ServerName" `
-        "STORAGE_ACCOUNT_NAME=$storageAccountName" `
-        "FILE_SHARE_NAME=$fileShareName" `
-        "LOCATION=$Location" `
-        "AUTO_SHUTDOWN_MINUTES=$AutoShutdownMinutes" `
-        "CONTAINER_GROUP_NAME=$containerGroupName" `
-    --output none
-
-# Set Key Vault reference settings separately (they contain parentheses which need special handling)
-Write-Host "  Setting Key Vault reference settings..." -ForegroundColor Gray
-# Build the Key Vault references
-$discordKeyRef = "@Microsoft.KeyVault(SecretUri=$keyVaultUri/secrets/DiscordPublicKey/)"
-$serverPasswordRef = "@Microsoft.KeyVault(SecretUri=$keyVaultUri/secrets/ServerPassword/)"
-
-# Use cmd /c to bypass PowerShell's parsing of parentheses
-$discordCmd = "az functionapp config appsettings set --resource-group `"$ResourceGroupName`" --name `"$functionAppName`" --set `"DISCORD_PUBLIC_KEY=$discordKeyRef`" --output none"
-$result1 = cmd /c $discordCmd 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  ⚠️  Warning: Failed to set DISCORD_PUBLIC_KEY" -ForegroundColor Yellow
-    Write-Host "  Error: $result1" -ForegroundColor Red
-} else {
-    Write-Host "  ✅ DISCORD_PUBLIC_KEY set successfully" -ForegroundColor Green
-}
-
-$serverPasswordCmd = "az functionapp config appsettings set --resource-group `"$ResourceGroupName`" --name `"$functionAppName`" --set `"SERVER_PASSWORD=$serverPasswordRef`" --output none"
-$result2 = cmd /c $serverPasswordCmd 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  ⚠️  Warning: Failed to set SERVER_PASSWORD" -ForegroundColor Yellow
-    Write-Host "  Error: $result2" -ForegroundColor Red
-} else {
-    Write-Host "  ✅ SERVER_PASSWORD set successfully" -ForegroundColor Green
-}
-
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "✅ Function App settings configured successfully with Key Vault references" -ForegroundColor Green
-    Write-Host "   Secrets are stored in Key Vault and referenced by the Function App" -ForegroundColor Gray
-} else {
-    Write-Host "⚠️  Warning: Some app settings may not have been set correctly" -ForegroundColor Yellow
-}
-
-# Register Discord commands
 Write-Host "`nDiscord Bot Setup:" -ForegroundColor Cyan
 Write-Host "1. Go to https://discord.com/developers/applications"
 Write-Host "2. Select your application"

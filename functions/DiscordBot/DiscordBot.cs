@@ -58,10 +58,8 @@ public class DiscordBot
 
         try
         {
-            // Read request body
             var body = await new StreamReader(req.Body).ReadToEndAsync();
             
-            // Parse JSON to check interaction type
             JsonElement data;
             try
             {
@@ -76,18 +74,13 @@ public class DiscordBot
                 return badRequestResponse;
             }
             
-            // Check if this is a PING (type 1) - Discord uses this for endpoint verification
-            // Allow PING through even if signature verification fails (for endpoint setup)
             bool isPing = false;
             if (data.TryGetProperty("type", out var typeElement))
             {
                 var interactionType = typeElement.GetInt32();
-                isPing = (interactionType == 1); // PING
+                isPing = (interactionType == 1);
             }
             
-            // Verify request signature (Discord requirement)
-            // Exception: Allow PING requests through for endpoint verification
-            // This allows Discord to verify the endpoint even if public key isn't configured yet
             if (!isPing && !VerifyDiscordSignature(req, body))
             {
                 _logger.LogWarning("Invalid Discord signature - request rejected");
@@ -97,7 +90,6 @@ public class DiscordBot
                 return unauthorizedResponse;
             }
             
-            // For PING requests, log but allow through (for endpoint verification)
             if (isPing)
             {
                 _logger.LogInformation("Received PING request (endpoint verification)");
@@ -128,7 +120,6 @@ public class DiscordBot
     {
         try
         {
-            // Get signature headers (Discord requirement - see https://discord.com/developers/docs/interactions/receiving-and-responding#security-and-authorization)
             if (!req.Headers.TryGetValues("X-Signature-Ed25519", out var signatureHeader) ||
                 !req.Headers.TryGetValues("X-Signature-Timestamp", out var timestampHeader))
             {
@@ -145,18 +136,14 @@ public class DiscordBot
                 return false;
             }
 
-            // Get Discord public key from environment variable (app setting)
             var publicKeyHex = Environment.GetEnvironmentVariable("DISCORD_PUBLIC_KEY");
 
             if (string.IsNullOrEmpty(publicKeyHex))
             {
                 _logger.LogWarning("Discord public key not configured - signature verification skipped");
-                // In production, this should return false for security
-                // For now, allow if public key is not configured (development mode)
                 return true;
             }
 
-            // Convert hex strings to bytes
             var signature = HexStringToBytes(signatureHex);
             var publicKey = HexStringToBytes(publicKeyHex);
 
@@ -166,8 +153,6 @@ public class DiscordBot
                 return false;
             }
 
-            // Discord signature verification: verify(timestamp + body, signature, public_key)
-            // See: https://discord.com/developers/docs/interactions/receiving-and-responding#security-and-authorization
             var messageBytes = Encoding.UTF8.GetBytes(timestamp + body);
             
             // Verify using ed25519

@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "16519974352625219931"
+      "templateHash": "16200176277626845598"
     }
   },
   "parameters": {
@@ -71,12 +71,19 @@
     }
   },
   "variables": {
-    "storageAccountName": "[format('valheim{0}', uniqueString(resourceGroup().id))]",
+    "storageAccountName": "valheimsa",
     "fileShareName": "valheim-worlds",
-    "functionAppName": "[format('valheim-func-{0}', uniqueString(resourceGroup().id))]",
-    "keyVaultName": "[format('valheim-kv-{0}', uniqueString(resourceGroup().id))]",
+    "keyVaultName": "valheim-kv",
     "containerGroupName": "valheim-server",
-    "appInsightsName": "[format('valheim-insights-{0}', uniqueString(resourceGroup().id))]"
+    "functionStorageAccountName": "valheimfuncsa",
+    "functionAppName": "valheim-func",
+    "appInsightsName": "valheim-func-insights",
+    "deploymentContainerName": "[format('app-package-{0}', toLower(take(variables('functionAppName'), 32)))]",
+    "keyVaultRoleDefId": "4633458b-17de-408a-b874-0445c86b69e6",
+    "containerInstanceRoleDefId": "5d977122-f97e-4b4d-a52f-6b43003ddb4d",
+    "storageAccountRoleDefId": "17d1049b-9a84-46fb-8f53-869881c3d3ab",
+    "storageFileRoleDefId": "a7264617-510b-434b-a828-9731dc254ea7",
+    "storageBlobRoleDefId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe"
   },
   "resources": [
     {
@@ -180,7 +187,7 @@
     {
       "type": "Microsoft.Storage/storageAccounts",
       "apiVersion": "2023-01-01",
-      "name": "[format('valheimfunc{0}', uniqueString(resourceGroup().id))]",
+      "name": "[variables('functionStorageAccountName')]",
       "location": "[parameters('location')]",
       "kind": "StorageV2",
       "sku": {
@@ -192,54 +199,85 @@
       }
     },
     {
-      "type": "Microsoft.Web/sites",
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
       "apiVersion": "2023-01-01",
+      "name": "[format('{0}/{1}', variables('functionStorageAccountName'), 'default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('functionStorageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-01-01",
+      "name": "[format('{0}/{1}/{2}', variables('functionStorageAccountName'), 'default', variables('deploymentContainerName'))]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('functionStorageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2024-04-01",
+      "name": "[format('{0}-plan', variables('functionAppName'))]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "FC1",
+        "tier": "FlexConsumption"
+      },
+      "kind": "functionapp",
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2024-04-01",
       "name": "[variables('functionAppName')]",
       "location": "[parameters('location')]",
       "kind": "functionapp,linux",
+      "identity": {
+        "type": "SystemAssigned"
+      },
       "properties": {
-        "serverFarmId": "",
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', variables('functionAppName')))]",
+        "functionAppConfig": {
+          "deployment": {
+            "storage": {
+              "type": "blobContainer",
+              "value": "[format('{0}{1}', reference(resourceId('Microsoft.Storage/storageAccounts', variables('functionStorageAccountName')), '2023-01-01').primaryEndpoints.blob, variables('deploymentContainerName'))]",
+              "authentication": {
+                "type": "SystemAssignedIdentity"
+              }
+            }
+          },
+          "scaleAndConcurrency": {
+            "maximumInstanceCount": 100,
+            "instanceMemoryMB": 2048
+          },
+          "runtime": {
+            "name": "dotnet-isolated",
+            "version": "8.0"
+          }
+        },
         "siteConfig": {
           "appSettings": [
-            {
-              "name": "AzureWebJobsStorage",
-              "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', format('valheimfunc{0}', uniqueString(resourceGroup().id)), listKeys(resourceId('Microsoft.Storage/storageAccounts', format('valheimfunc{0}', uniqueString(resourceGroup().id))), '2023-01-01').keys[0].value, environment().suffixes.storage)]"
-            },
-            {
-              "name": "AzureWebJobsStorage__accountName",
-              "value": "[format('valheimfunc{0}', uniqueString(resourceGroup().id))]"
-            },
-            {
-              "name": "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING",
-              "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', format('valheimfunc{0}', uniqueString(resourceGroup().id)), listKeys(resourceId('Microsoft.Storage/storageAccounts', format('valheimfunc{0}', uniqueString(resourceGroup().id))), '2023-01-01').keys[0].value, environment().suffixes.storage)]"
-            },
-            {
-              "name": "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING__accountName",
-              "value": "[format('valheimfunc{0}', uniqueString(resourceGroup().id))]"
-            },
-            {
-              "name": "WEBSITE_CONTENTSHARE",
-              "value": "[toLower(variables('functionAppName'))]"
-            },
             {
               "name": "FUNCTIONS_EXTENSION_VERSION",
               "value": "~4"
             },
             {
-              "name": "FUNCTIONS_WORKER_RUNTIME",
-              "value": "dotnet-isolated"
+              "name": "SUBSCRIPTION_ID",
+              "value": "[subscription().subscriptionId]"
             },
             {
-              "name": "DOTNET_ISOLATED_WORKER_RUNTIME_VERSION",
-              "value": "8"
+              "name": "RESOURCE_GROUP_NAME",
+              "value": "[resourceGroup().name]"
             },
             {
-              "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
-              "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').InstrumentationKey]"
-            },
-            {
-              "name": "KEY_VAULT_NAME",
-              "value": "[variables('keyVaultName')]"
+              "name": "SERVER_NAME",
+              "value": "[parameters('serverName')]"
             },
             {
               "name": "STORAGE_ACCOUNT_NAME",
@@ -250,45 +288,117 @@
               "value": "[variables('fileShareName')]"
             },
             {
-              "name": "CONTAINER_GROUP_NAME",
-              "value": "[variables('containerGroupName')]"
-            },
-            {
-              "name": "RESOURCE_GROUP_NAME",
-              "value": "[parameters('resourceGroupName')]"
-            },
-            {
-              "name": "SUBSCRIPTION_ID",
-              "value": "[subscription().subscriptionId]"
+              "name": "LOCATION",
+              "value": "[parameters('location')]"
             },
             {
               "name": "AUTO_SHUTDOWN_MINUTES",
               "value": "[string(parameters('autoShutdownMinutes'))]"
             },
             {
-              "name": "SERVER_NAME",
-              "value": "[parameters('serverName')]"
+              "name": "CONTAINER_GROUP_NAME",
+              "value": "[variables('containerGroupName')]"
             },
             {
-              "name": "LOCATION",
-              "value": "[parameters('location')]"
+              "name": "DISCORD_PUBLIC_KEY",
+              "value": "[format('@Microsoft.KeyVault(SecretUri={0}secrets/DiscordPublicKey/)', reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), '2023-07-01').vaultUri)]"
             },
             {
-              "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
-              "value": "false"
+              "name": "SERVER_PASSWORD",
+              "value": "[format('@Microsoft.KeyVault(SecretUri={0}secrets/ServerPassword/)', reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), '2023-07-01').vaultUri)]"
+            },
+            {
+              "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
             }
           ],
-          "ftpsState": "Disabled",
+          "use32BitWorkerProcess": false,
+          "http20Enabled": true,
           "minTlsVersion": "1.2"
         },
-        "httpsOnly": true
-      },
-      "identity": {
-        "type": "SystemAssigned"
+        "httpsOnly": true,
+        "reserved": true
       },
       "dependsOn": [
         "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
-        "[resourceId('Microsoft.Storage/storageAccounts', format('valheimfunc{0}', uniqueString(resourceGroup().id)))]"
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('functionStorageAccountName'), 'default', variables('deploymentContainerName'))]",
+        "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', variables('functionAppName')))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('functionStorageAccountName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.KeyVault/vaults/{0}', variables('keyVaultName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('keyVaultRoleDefId'))]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultRoleDefId'))]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceGroup().id, resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('containerInstanceRoleDefId'))]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('containerInstanceRoleDefId'))]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}', variables('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('storageAccountRoleDefId'))]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageAccountRoleDefId'))]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}', variables('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('storageFileRoleDefId'))]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageFileRoleDefId'))]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}', variables('functionStorageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('functionStorageAccountName')), resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('storageBlobRoleDefId'))]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageBlobRoleDefId'))]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('functionStorageAccountName'))]"
       ]
     }
   ],
@@ -299,7 +409,7 @@
     },
     "functionAppUrl": {
       "type": "string",
-      "value": "[format('https://{0}', reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2023-01-01').defaultHostName)]"
+      "value": "[format('https://{0}', reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01').defaultHostName)]"
     },
     "storageAccountName": {
       "type": "string",
@@ -307,7 +417,7 @@
     },
     "functionStorageAccountName": {
       "type": "string",
-      "value": "[format('valheimfunc{0}', uniqueString(resourceGroup().id))]"
+      "value": "[variables('functionStorageAccountName')]"
     },
     "keyVaultName": {
       "type": "string",
@@ -316,6 +426,10 @@
     "containerGroupName": {
       "type": "string",
       "value": "[variables('containerGroupName')]"
+    },
+    "appInsightsName": {
+      "type": "string",
+      "value": "[variables('appInsightsName')]"
     },
     "appInsightsConnectionString": {
       "type": "string",
