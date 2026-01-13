@@ -87,9 +87,11 @@ This solution provides a cost-effective, Discord-controlled Valheim dedicated se
 - **AutoShutdown**: Timer trigger (every 5 minutes)
 
 **Configuration**:
-- Runtime: Python 3.9+
-- Plan: Consumption (Y1) - pay per execution
+- Runtime: .NET 8.0 (dotnet-isolated)
+- Plan: Flex Consumption (FC1) - enhanced scalability and features
 - Identity: System-assigned managed identity
+- Deployment: Blob container deployment (One Deploy method)
+- Secrets: Accessed via Key Vault references in app settings (not direct Key Vault calls)
 
 **Cost**: ~$0.20/month (minimal usage)
 
@@ -99,9 +101,10 @@ This solution provides a cost-effective, Discord-controlled Valheim dedicated se
 
 **Secrets**:
 - Discord Bot Token
+- Discord Public Key (for signature verification)
 - Valheim Server Password
 
-**Access**: Function App via managed identity
+**Access**: Function App accesses secrets via Key Vault references in app settings (resolved by Azure platform at runtime)
 
 **Cost**: ~$0.03/month
 
@@ -124,8 +127,8 @@ This solution provides a cost-effective, Discord-controlled Valheim dedicated se
 1. User types `/valheim start` in Discord
 2. Discord sends interaction to Function App endpoint
 3. DiscordBot function:
-   - Retrieves secrets from Key Vault
-   - Gets storage account key
+   - Reads secrets from environment variables (resolved from Key Vault references)
+   - Gets storage account key via Azure SDK
    - Creates container group via Azure SDK
    - Returns confirmation message
 4. Container starts (1-3 minutes)
@@ -152,10 +155,12 @@ This solution provides a cost-effective, Discord-controlled Valheim dedicated se
 
 ### Authentication & Authorization
 
-- **Discord**: Bot token stored in Key Vault
-- **Azure**: Managed identity for Function App
-- **Key Vault**: Access policies restrict access
-- **Storage**: Function App has contributor role
+- **Discord**: Bot token and public key stored in Key Vault, accessed via app setting references
+- **Discord Interactions**: Ed25519 signature verification using Discord public key
+- **Azure**: Managed identity for Function App to access Azure resources
+- **Key Vault**: RBAC authorization, Function App has "Key Vault Secrets User" role
+- **Storage**: Function App has "Storage Account Contributor" and "Storage File Data SMB Share Elevated Contributor" roles
+- **Container Instances**: Function App has "Azure Container Instances Contributor" role
 
 ### Network Security
 

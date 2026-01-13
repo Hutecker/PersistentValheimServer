@@ -6,7 +6,7 @@ This document explains how world save data is persisted and protected from data 
 
 ### Storage Layer
 - **Azure File Share**: `valheim-worlds` (100 GB quota)
-- **Storage Account**: Standard LRS (Locally Redundant Storage)
+- **Storage Account**: `valheimsa` (Standard LRS - Locally Redundant Storage)
 - **Location**: Same region as the container instances
 - **Access**: Mounted to container at `/config`
 

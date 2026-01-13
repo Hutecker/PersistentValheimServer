@@ -67,10 +67,10 @@ Run the deployment script:
 ```
 
 The script will:
-- Deploy all Azure infrastructure (Storage, Key Vault, Function App)
-- Build and deploy the Function App code
-- Configure app settings with Key Vault references
+- Deploy all Azure infrastructure (Storage, Key Vault, Function App) via Bicep
+- Configure Function App settings, including Key Vault references for secrets
 - Set up managed identity and role assignments
+- Build, test, and deploy the Function App code
 
 ### 3. Configure Discord Interactions Endpoint
 
@@ -80,7 +80,21 @@ After deployment, set the interactions endpoint in Discord:
 2. Set **Interaction Endpoint URL** to: `https://valheim-func.azurewebsites.net/api/DiscordBot`
 3. Register slash commands using the JSON shown at the end of deployment
 
-### 3. Usage
+### 4. Migrate World Save (Optional)
+
+If you have an existing world save, use the migration script:
+
+```powershell
+.\scripts\migrate-save.ps1 `
+  -ResourceGroupName "valheim-server-rg" `
+  -StorageAccountName "valheimsa" `
+  -FileShareName "valheim-worlds" `
+  -WorldName "Dedicated" `
+  -WorldDbPath "C:\path\to\world.db" `
+  -WorldFwlPath "C:\path\to\world.fwl"
+```
+
+### 5. Usage
 
 In your Discord channel:
 - `/valheim start` - Start the server
@@ -101,16 +115,17 @@ The server will automatically shut down after the configured timeout (default: 2
 │   └── ValheimServerFunctions.Tests/  # Unit tests
 └── scripts/               # Deployment scripts
     ├── deploy.ps1         # Main deployment script
-    └── cleanup-role-assignments.ps1  # Role assignment cleanup utility
+    └── migrate-save.ps1   # World save migration utility
 ```
 
 ## Architecture
 
 - **Azure Container Instances (ACI)**: Runs Valheim server on-demand
 - **Azure File Share**: Persistent storage for world saves
-- **Azure Functions (Flex Consumption)**: Discord bot and auto-shutdown logic
-- **Azure Key Vault**: Secure storage for secrets (accessed via Key Vault references)
+- **Azure Functions (Flex Consumption)**: Discord bot and auto-shutdown logic (.NET 8.0 isolated)
+- **Azure Key Vault**: Secure storage for secrets (accessed via Key Vault references in app settings)
 - **Managed Identity**: System-assigned identity for secure resource access
+- **Application Insights**: Monitoring and logging
 
 ## Cost Estimates
 
