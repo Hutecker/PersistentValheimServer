@@ -47,18 +47,28 @@ public class AutoShutdown
             }
 
             var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
-            var resourceGroup = subscription.GetResourceGroup(resourceGroupName);
+            var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
             var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
-            var instanceView = containerGroup.Value.GetInstanceView();
+            var containerGroupResource = containerGroup.Value;
+            var containerGroupData = containerGroupResource.Get().Value;
 
-            if (instanceView?.State == "Running")
+            // Check state from container instance view
+            string? state = null;
+            if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
+            {
+                var container = containerGroupData.Data.Containers[0];
+                state = container.InstanceView?.CurrentState?.State;
+            }
+
+            if (state != null && state.Equals("Running", StringComparison.OrdinalIgnoreCase))
             {
                 // Check if auto-shutdown time has passed
                 // In production, store this in Azure Table Storage
                 // For now, we'll use a simple time-based check
 
-                // Get container start time
-                if (instanceView.Events != null && instanceView.Events.Any())
+                // Get container start time from instance view events
+                var instanceView = containerGroupData.Data.Containers?[0].InstanceView;
+                if (instanceView?.Events != null && instanceView.Events.Any())
                 {
                     var startEvent = instanceView.Events
                         .FirstOrDefault(e => e.Count > 0);
@@ -71,7 +81,7 @@ public class AutoShutdown
                         if (DateTime.UtcNow >= shutdownTime)
                         {
                             _logger.LogInformation("Auto-shutdown time reached. Stopping server...");
-                            containerGroup.Value.Delete(WaitUntil.Started);
+                            containerGroupResource.Delete(Azure.WaitUntil.Started);
                             _logger.LogInformation("Server stopped successfully");
                         }
                         else

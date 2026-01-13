@@ -8,6 +8,10 @@ param location string = resourceGroup().location
 @secure()
 param discordBotToken string
 
+@description('Discord public key for signature verification (required for interactions endpoint)')
+@secure()
+param discordPublicKey string
+
 @description('Valheim server password')
 @secure()
 param serverPassword string
@@ -19,17 +23,21 @@ param serverName string = 'Valheim Server'
 param autoShutdownMinutes int = 120
 
 @description('Container CPU cores')
-param containerCpu float = 2
+param containerCpu int = 2
 
 @description('Container memory in GB')
-param containerMemory float = 4
+param containerMemory int = 4
 
-var storageAccountName = 'valheim${uniqueString(resourceGroup().id)}'
+// Standardized naming: use short hash of resource group for consistency
+// This ensures deterministic naming while keeping names short
+var resourceSuffix = substring(uniqueString(resourceGroup().id), 0, 8)
+var storageAccountName = 'valheim${resourceSuffix}'
 var fileShareName = 'valheim-worlds'
-var functionAppName = 'valheim-func-${uniqueString(resourceGroup().id)}'
-var keyVaultName = 'valheim-kv-${uniqueString(resourceGroup().id)}'
+// Function App is created via CLI with standardized name 'valheim-func-flex' (not in Bicep)
+// Application Insights is automatically created with the Function App (not in Bicep)
+var keyVaultName = 'valheim-kv-${resourceSuffix}'
 var containerGroupName = 'valheim-server'
-var appInsightsName = 'valheim-insights-${uniqueString(resourceGroup().id)}'
+var functionStorageAccountName = 'valheimfunc${resourceSuffix}'
 
 // Storage Account for world saves
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -53,8 +61,13 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
 }
 
 // File Share for world persistence
+resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-01-01' = {
+  parent: storageAccount
+  name: 'default'
+}
+
 resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
-  parent: storageAccount::storageAccount.properties.primaryEndpoints.file
+  parent: fileService
   name: fileShareName
   properties: {
     shareQuota: 100 // 100 GB should be plenty for world saves
@@ -62,7 +75,7 @@ resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-0
 }
 
 // Key Vault for secrets
-resource keyVault 'Microsoft.KeyVault/vaults@2023-10-01' = {
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: keyVaultName
   location: location
   properties: {
@@ -95,20 +108,23 @@ resource serverPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-// Application Insights for monitoring
-resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
-  name: appInsightsName
-  location: location
-  kind: 'web'
+// Discord Public Key for signature verification
+// This is required for Discord interactions endpoint verification
+resource discordPublicKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'DiscordPublicKey'
   properties: {
-    Application_Type: 'web'
-    Request_Source: 'rest'
+    value: discordPublicKey
   }
 }
 
+// Application Insights is automatically created when the Function App is created via CLI
+// No need to create it separately in Bicep - the Function App will have its own Application Insights
+// This prevents duplicate Application Insights resources
+
 // Storage Account for Function App
 resource functionStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
-  name: 'valheimfunc${uniqueString(resourceGroup().id)}'
+  name: functionStorageAccountName
   location: location
   kind: 'StorageV2'
   sku: {
@@ -120,157 +136,22 @@ resource functionStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' =
   }
 }
 
-// App Service Plan (Consumption - pay per execution)
-resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
-  name: 'valheim-func-plan'
-  location: location
-  kind: 'functionapp'
-  properties: {
-    reserved: true
-  }
-  sku: {
-    name: 'Y1' // Consumption plan - cost-effective
-    tier: 'Dynamic'
-  }
-}
+// Flex Consumption Function App is created via Azure CLI in deploy.ps1
+// Bicep doesn't fully support Flex Consumption functionAppConfig yet
+// The Function App name is standardized to 'valheim-func-flex'
 
-// Function App
-resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
-  name: functionAppName
-  location: location
-  kind: 'functionapp'
-  properties: {
-    serverFarmId: appServicePlan.id
-    siteConfig: {
-      appSettings: [
-        {
-          name: 'AzureWebJobsStorage__accountName'
-          value: functionStorageAccount.name
-        }
-        {
-          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING__accountName'
-          value: functionStorageAccount.name
-        }
-        {
-          name: 'WEBSITE_CONTENTSHARE'
-          value: toLower(functionAppName)
-        }
-        {
-          name: 'FUNCTIONS_EXTENSION_VERSION'
-          value: '~4'
-        }
-        {
-          name: 'FUNCTIONS_WORKER_RUNTIME'
-          value: 'dotnet-isolated'
-        }
-        {
-          name: 'APPINSIGHTS_INSTRUMENTATIONKEY'
-          value: appInsights.properties.InstrumentationKey
-        }
-        {
-          name: 'KEY_VAULT_NAME'
-          value: keyVaultName
-        }
-        {
-          name: 'STORAGE_ACCOUNT_NAME'
-          value: storageAccountName
-        }
-        {
-          name: 'FILE_SHARE_NAME'
-          value: fileShareName
-        }
-        {
-          name: 'CONTAINER_GROUP_NAME'
-          value: containerGroupName
-        }
-        {
-          name: 'RESOURCE_GROUP_NAME'
-          value: resourceGroupName
-        }
-        {
-          name: 'AUTO_SHUTDOWN_MINUTES'
-          value: string(autoShutdownMinutes)
-        }
-        {
-          name: 'SERVER_NAME'
-          value: serverName
-        }
-        {
-          name: 'LOCATION'
-          value: location
-        }
-      ]
-      ftpsState: 'Disabled'
-      minTlsVersion: '1.2'
-    }
-    httpsOnly: true
-  }
-  identity: {
-    type: 'SystemAssigned'
-  }
-}
-
-// Grant Function App access to Key Vault using RBAC
-resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, functionApp.identity.principalId, 'KeyVaultSecretsUser')
-  scope: keyVault
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6') // Key Vault Secrets User
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Grant Function App access to manage Container Instances
-resource functionAppRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(resourceGroup().id, functionApp.id, 'ContainerInstanceContributor')
-  scope: resourceGroup()
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '83a5a552-3eb7-4b5f-b13c-2afcc11d3ff8') // Container Instance Contributor
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Grant Function App access to function storage account
-resource functionStorageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(resourceGroup().id, functionApp.id, 'StorageBlobDataContributor')
-  scope: functionStorageAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe') // Storage Blob Data Contributor
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Grant Function App access to Storage Account
-resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(resourceGroup().id, functionApp.id, 'StorageAccountContributor')
-  scope: storageAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '17d1049b-9a84-46fb-8f53-869881c3d3ab') // Storage Account Contributor
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Grant Function App access to Azure Files using identity-based authentication
-// Note: This is for future use if we migrate to identity-based file access
-// Currently, container instances still require storage keys for Azure Files mounts
-resource fileShareRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(resourceGroup().id, functionApp.id, 'StorageFileDataSMBShareElevatedContributor')
-  scope: storageAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a7264617-510f-478b-bc68-6b8df7c8c4e0') // Storage File Data SMB Share Elevated Contributor
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
+// Role assignments are created via Azure CLI in deploy.ps1 after the Function App is created
+// This is because:
+// 1. The Function App is created via CLI (Flex Consumption not fully supported in Bicep)
+// 2. Role assignments require the Function App's managed identity principal ID
+// 3. Azure doesn't allow updating existing role assignments, so they must be created after Function App creation
 
 // Outputs
-output functionAppName string = functionApp.name
-output functionAppUrl string = 'https://${functionApp.properties.defaultHostName}'
+// Function App is created via CLI with standardized name 'valheim-func-flex'
+output functionAppName string = 'valheim-func-flex'
+output functionAppUrl string = 'https://valheim-func-flex.azurewebsites.net'
 output storageAccountName string = storageAccount.name
+output functionStorageAccountName string = functionStorageAccount.name
 output keyVaultName string = keyVaultName
 output containerGroupName string = containerGroupName
-output appInsightsConnectionString string = appInsights.properties.ConnectionString
+// Application Insights is automatically created with the Function App

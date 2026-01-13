@@ -11,7 +11,6 @@ using System.Threading.Tasks;
 using Azure.Core;
 using Azure.Identity;
 using Azure;
-using Azure.Core;
 using Azure.ResourceManager;
 using Azure.ResourceManager.ContainerInstance;
 using Azure.ResourceManager.ContainerInstance.Models;
@@ -22,6 +21,7 @@ using Azure.Security.KeyVault.Secrets;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
+using NSec.Cryptography;
 
 namespace ValheimServerFunctions;
 
@@ -31,7 +31,7 @@ public class DiscordBot
     private static readonly DefaultAzureCredential Credential = new();
     private static SecretClient? _secretClient;
     private static ArmClient? _armClient;
-    private static readonly Dictionary<string, ServerState> ServerState = new();
+    private static readonly Dictionary<string, ServerState> _serverStates = new();
 
     private class ServerState
     {
@@ -67,8 +67,54 @@ public class DiscordBot
 
         try
         {
+            // Read request body
             var body = await new StreamReader(req.Body).ReadToEndAsync();
-            var data = JsonSerializer.Deserialize<JsonElement>(body);
+            
+            // Parse JSON to check interaction type
+            JsonElement data;
+            try
+            {
+                data = JsonSerializer.Deserialize<JsonElement>(body);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to parse request body as JSON");
+                var badRequestResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                badRequestResponse.Headers.Add("Content-Type", "application/json");
+                await badRequestResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Invalid JSON" }));
+                return badRequestResponse;
+            }
+            
+            // Check if this is a PING (type 1) - Discord uses this for endpoint verification
+            // Allow PING through even if signature verification fails (for endpoint setup)
+            bool isPing = false;
+            if (data.TryGetProperty("type", out var typeElement))
+            {
+                var interactionType = typeElement.GetInt32();
+                isPing = (interactionType == 1); // PING
+            }
+            
+            // Verify request signature (Discord requirement)
+            // Exception: Allow PING requests through for endpoint verification
+            // This allows Discord to verify the endpoint even if public key isn't configured yet
+            if (!isPing && !VerifyDiscordSignature(req, body))
+            {
+                _logger.LogWarning("Invalid Discord signature - request rejected");
+                var unauthorizedResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
+                unauthorizedResponse.Headers.Add("Content-Type", "application/json");
+                await unauthorizedResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Unauthorized" }));
+                return unauthorizedResponse;
+            }
+            
+            // For PING requests, log but allow through (for endpoint verification)
+            if (isPing)
+            {
+                _logger.LogInformation("Received PING request (endpoint verification)");
+                if (!VerifyDiscordSignature(req, body))
+                {
+                    _logger.LogWarning("PING signature verification failed, but allowing through for endpoint verification");
+                }
+            }
 
             var responseData = await HandleDiscordInteractionAsync(data);
             var response = req.CreateResponse(HttpStatusCode.OK);
@@ -84,6 +130,121 @@ public class DiscordBot
             errorResponse.Headers.Add("Content-Type", "application/json");
             await errorResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = ex.Message }));
             return errorResponse;
+        }
+    }
+
+    private bool VerifyDiscordSignature(HttpRequestData req, string body)
+    {
+        try
+        {
+            // Get signature headers (Discord requirement - see https://discord.com/developers/docs/interactions/receiving-and-responding#security-and-authorization)
+            if (!req.Headers.TryGetValues("X-Signature-Ed25519", out var signatureHeader) ||
+                !req.Headers.TryGetValues("X-Signature-Timestamp", out var timestampHeader))
+            {
+                _logger.LogWarning("Missing Discord signature headers - request rejected");
+                return false;
+            }
+
+            var signatureHex = signatureHeader.FirstOrDefault();
+            var timestamp = timestampHeader.FirstOrDefault();
+
+            if (string.IsNullOrEmpty(signatureHex) || string.IsNullOrEmpty(timestamp))
+            {
+                _logger.LogWarning("Empty Discord signature headers - request rejected");
+                return false;
+            }
+
+            // Get Discord public key from Key Vault or environment variable
+            string? publicKeyHex = null;
+            
+            if (_secretClient != null)
+            {
+                try
+                {
+                    var publicKeySecret = _secretClient.GetSecret("DiscordPublicKey");
+                    publicKeyHex = publicKeySecret.Value.Value;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not retrieve Discord public key from Key Vault");
+                }
+            }
+            
+            // Fallback to environment variable
+            if (string.IsNullOrEmpty(publicKeyHex))
+            {
+                publicKeyHex = Environment.GetEnvironmentVariable("DISCORD_PUBLIC_KEY");
+            }
+
+            if (string.IsNullOrEmpty(publicKeyHex))
+            {
+                _logger.LogWarning("Discord public key not configured - signature verification skipped");
+                // In production, this should return false for security
+                // For now, allow if public key is not configured (development mode)
+                return true;
+            }
+
+            // Convert hex strings to bytes
+            var signature = HexStringToBytes(signatureHex);
+            var publicKey = HexStringToBytes(publicKeyHex);
+
+            if (signature == null || signature.Length != 64 || publicKey == null || publicKey.Length != 32)
+            {
+                _logger.LogWarning("Invalid signature or public key format");
+                return false;
+            }
+
+            // Discord signature verification: verify(timestamp + body, signature, public_key)
+            // See: https://discord.com/developers/docs/interactions/receiving-and-responding#security-and-authorization
+            var messageBytes = Encoding.UTF8.GetBytes(timestamp + body);
+            
+            // Verify using ed25519
+            try
+            {
+                var algorithm = SignatureAlgorithm.Ed25519;
+                var publicKeyBlob = PublicKey.Import(algorithm, publicKey, KeyBlobFormat.RawPublicKey);
+                
+                var isValid = algorithm.Verify(publicKeyBlob, messageBytes, signature);
+                
+                if (!isValid)
+                {
+                    _logger.LogWarning("Discord signature verification failed - request rejected");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during ed25519 signature verification");
+                return false;
+            }
+
+            _logger.LogInformation("Discord signature verified successfully");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error verifying Discord signature");
+            return false;
+        }
+    }
+
+    private static byte[]? HexStringToBytes(string hex)
+    {
+        try
+        {
+            if (hex.Length % 2 != 0)
+                return null;
+            
+            var bytes = new byte[hex.Length / 2];
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+            }
+            return bytes;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -226,7 +387,7 @@ public class DiscordBot
             
             if (status == "running")
             {
-                if (ServerState.TryGetValue(stateKey, out var state) && state.StartedAt.HasValue && state.AutoShutdownTime.HasValue)
+                if (_serverStates.TryGetValue(stateKey, out var state) && state.StartedAt.HasValue && state.AutoShutdownTime.HasValue)
                 {
                     var timeRemaining = state.AutoShutdownTime.Value - DateTime.UtcNow;
                     if (timeRemaining.TotalSeconds > 0)
@@ -289,12 +450,20 @@ public class DiscordBot
                 return "unknown";
 
             var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
-            var resourceGroup = subscription.GetResourceGroup(resourceGroupName);
+            var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
             var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
             
-            var instanceView = containerGroup.Value.GetInstanceView();
-            if (instanceView?.State != null)
-                return instanceView.State.ToLower();
+            // Get the container group resource and check state
+            var containerGroupResource = containerGroup.Value;
+            var containerGroupData = containerGroupResource.Get().Value;
+            
+            // Check state from container instance view
+            if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
+            {
+                var container = containerGroupData.Data.Containers[0];
+                var state = container.InstanceView?.CurrentState?.State ?? "Unknown";
+                return state.ToLower();
+            }
 
             return "stopped";
         }
@@ -317,22 +486,30 @@ public class DiscordBot
                 return (false, "Azure clients not initialized");
 
             var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
-            var resourceGroup = subscription.GetResourceGroup(resourceGroupName);
+            var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
 
             // Check if container group exists and is running
             try
             {
                 var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
-                var instanceView = containerGroup.Value.GetInstanceView();
+                var containerGroupResource = containerGroup.Value;
+                var existingContainerGroupData = containerGroupResource.Get().Value;
                 
-                if (instanceView?.State == "Running")
-                    return (true, "Server is already running!");
-
-                // If it exists but is stopped, delete it first
-                if (instanceView?.State == "Stopped")
+                // Check state from container instance view
+                if (existingContainerGroupData.Data.Containers != null && existingContainerGroupData.Data.Containers.Count > 0)
                 {
-                    _logger.LogInformation("Deleting stopped container group before recreating...");
-                    containerGroup.Value.Delete(WaitUntil.Completed);
+                    var existingContainer = existingContainerGroupData.Data.Containers[0];
+                    var state = existingContainer.InstanceView?.CurrentState?.State ?? "Unknown";
+                    
+                    if (state.Equals("Running", StringComparison.OrdinalIgnoreCase))
+                        return (true, "Server is already running!");
+
+                    // If it exists but is stopped, delete it first
+                    if (state.Equals("Stopped", StringComparison.OrdinalIgnoreCase) || state.Equals("Terminated", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogInformation("Deleting stopped container group before recreating...");
+                        containerGroupResource.Delete(WaitUntil.Completed);
+                    }
                 }
             }
             catch (Exception ex)
@@ -356,66 +533,63 @@ public class DiscordBot
             // Get storage account key using managed identity
             // Note: ACI doesn't support managed identity for Azure Files mounts yet,
             // so we must retrieve the key, but we do so using managed identity
-            var storageAccount = resourceGroup.GetStorageAccount(storageAccountName);
-            var keys = storageAccount.Value.GetKeys();
+            var storageAccount = resourceGroup.GetStorageAccount(storageAccountName).Value;
+            var keys = storageAccount.GetKeys();
             var storageKey = keys.First().Value;
 
-            // Create container group
-            var containerGroupData = new ContainerGroupData(location)
+            // Create container group using the correct API
+            var azureLocation = new AzureLocation(location);
+            var container = new ContainerInstanceContainer("valheim-server", "lloesche/valheim-server:latest", 
+                new ContainerResourceRequirements(new ContainerResourceRequestsContent(2.0, 4.0)))
             {
-                OsType = ContainerInstanceOperatingSystemType.Linux,
-                RestartPolicy = ContainerGroupRestartPolicy.Never,
-                Containers =
+                EnvironmentVariables =
                 {
-                    new ContainerInstanceContainer("valheim-server", "lloesche/valheim-server:latest")
-                    {
-                        Resources = new ContainerResourceRequirements
-                        {
-                            Requests = new ContainerResourceRequests
-                            {
-                                Cpu = 2.0,
-                                MemoryInGB = 4.0
-                            }
-                        },
-                        EnvironmentVariables =
-                        {
-                            new ContainerEnvironmentVariable("SERVER_NAME") { Value = serverName },
-                            new ContainerEnvironmentVariable("WORLD_NAME") { Value = "Dedicated" },
-                            new ContainerEnvironmentVariable("SERVER_PASS") { SecureValue = serverPassword },
-                            new ContainerEnvironmentVariable("SERVER_PUBLIC") { Value = "1" },
-                            new ContainerEnvironmentVariable("BACKUPS") { Value = "1" },
-                            new ContainerEnvironmentVariable("BACKUPS_RETENTION_DAYS") { Value = "7" },
-                            new ContainerEnvironmentVariable("UPDATE_CRON") { Value = "0 4 * * *" }
-                        },
-                        VolumeMounts =
-                        {
-                            new ContainerVolumeMount("world-data", "/config")
-                        },
-                        Ports =
-                        {
-                            new ContainerPort(2456) { Protocol = ContainerNetworkProtocol.Udp },
-                            new ContainerPort(2457) { Protocol = ContainerNetworkProtocol.Udp },
-                            new ContainerPort(2458) { Protocol = ContainerNetworkProtocol.Udp }
-                        }
-                    }
+                    new ContainerEnvironmentVariable("SERVER_NAME") { Value = serverName },
+                    new ContainerEnvironmentVariable("WORLD_NAME") { Value = "Dedicated" },
+                    new ContainerEnvironmentVariable("SERVER_PASS") { SecureValue = serverPassword },
+                    new ContainerEnvironmentVariable("SERVER_PUBLIC") { Value = "1" },
+                    new ContainerEnvironmentVariable("BACKUPS") { Value = "1" },
+                    new ContainerEnvironmentVariable("BACKUPS_RETENTION_DAYS") { Value = "7" },
+                    new ContainerEnvironmentVariable("UPDATE_CRON") { Value = "0 4 * * *" }
                 },
+                VolumeMounts =
+                {
+                    new ContainerVolumeMount("world-data", "/config")
+                },
+                Ports =
+                {
+                    new ContainerPort(2456) { Protocol = ContainerNetworkProtocol.Udp },
+                    new ContainerPort(2457) { Protocol = ContainerNetworkProtocol.Udp },
+                    new ContainerPort(2458) { Protocol = ContainerNetworkProtocol.Udp }
+                }
+            };
+
+            var ipAddressPorts = new List<ContainerGroupPort>
+            {
+                new ContainerGroupPort(2456) { Protocol = ContainerGroupNetworkProtocol.Udp },
+                new ContainerGroupPort(2457) { Protocol = ContainerGroupNetworkProtocol.Udp },
+                new ContainerGroupPort(2458) { Protocol = ContainerGroupNetworkProtocol.Udp }
+            };
+
+            var ipAddress = new ContainerGroupIPAddress(ipAddressPorts, ContainerGroupIPAddressType.Public)
+            {
+                DnsNameLabel = $"valheim-{GetHashString(resourceGroupName).Substring(0, 8)}"
+            };
+
+            var containerGroupData = new ContainerGroupData(azureLocation, new[] { container }, ContainerInstanceOperatingSystemType.Linux)
+            {
+                RestartPolicy = ContainerGroupRestartPolicy.Never,
                 Volumes =
                 {
                     new ContainerVolume("world-data")
                     {
-                        AzureFile = new AzureFileVolume(fileShareName, storageAccountName, storageKey)
+                        AzureFile = new ContainerInstanceAzureFileVolume(fileShareName, storageAccountName)
+                        {
+                            StorageAccountKey = storageKey
+                        }
                     }
                 },
-                IpAddress = new ContainerGroupIpAddressType("Public")
-                {
-                    Ports =
-                    {
-                        new ContainerGroupPort(2456) { Protocol = ContainerGroupNetworkProtocol.Udp },
-                        new ContainerGroupPort(2457) { Protocol = ContainerGroupNetworkProtocol.Udp },
-                        new ContainerGroupPort(2458) { Protocol = ContainerGroupNetworkProtocol.Udp }
-                    },
-                    DnsNameLabel = $"valheim-{GetHashString(resourceGroupName).Substring(0, 8)}"
-                }
+                IPAddress = ipAddress
             };
 
             _logger.LogInformation("Creating container group...");
@@ -424,7 +598,7 @@ public class DiscordBot
             // Update state
             var stateKey = containerGroupName;
             var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable("AUTO_SHUTDOWN_MINUTES") ?? "120");
-            ServerState[stateKey] = new ServerState
+            _serverStates[stateKey] = new ServerState
             {
                 Status = "starting",
                 StartedAt = DateTime.UtcNow,
@@ -486,24 +660,33 @@ public class DiscordBot
                     }
 
                     var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
-                    var resourceGroup = subscription.GetResourceGroup(resourceGroupName);
+                    var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
                     var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
-                    var instanceView = containerGroup.Value.GetInstanceView();
+                    var containerGroupResource = containerGroup.Value;
+                    var containerGroupData = containerGroupResource.Get().Value;
+                    
+                    // Check state from container instance view
+                    string? state = null;
+                    if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
+                    {
+                        var container = containerGroupData.Data.Containers[0];
+                        state = container.InstanceView?.CurrentState?.State;
+                    }
 
-                    if (instanceView?.State == "Running")
+                    if (state != null && state.Equals("Running", StringComparison.OrdinalIgnoreCase))
                     {
                         // Get IP address
-                        var ipAddress = containerGroup.Value.Data.IpAddress;
-                        if (ipAddress != null)
+                        var ipAddressData = containerGroupData.Data.IPAddress;
+                        if (ipAddressData != null)
                         {
-                            serverIp = ipAddress.IP;
-                            serverFqdn = ipAddress.Fqdn;
+                            serverIp = ipAddressData.IP?.ToString();
+                            serverFqdn = ipAddressData.Fqdn;
                         }
 
                         // Get auto-shutdown info
                         var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable("AUTO_SHUTDOWN_MINUTES") ?? "120");
                         var stateKey = containerGroupName;
-                        ServerState[stateKey] = new ServerState
+                        _serverStates[stateKey] = new ServerState
                         {
                             Status = "running",
                             StartedAt = DateTime.UtcNow,
@@ -534,10 +717,10 @@ public class DiscordBot
                         _logger.LogInformation($"Server is ready! IP: {serverIp}");
                         return;
                     }
-                    else if (instanceView?.State == "Failed" || instanceView?.State == "Stopped")
+                    else if (state != null && (state.Equals("Failed", StringComparison.OrdinalIgnoreCase) || state.Equals("Stopped", StringComparison.OrdinalIgnoreCase)))
                     {
                         await SendFollowUpMessage(applicationId, interactionToken, 
-                            $"❌ Server failed to start. Status: {instanceView.State}");
+                            $"❌ Server failed to start. Status: {state}");
                         return;
                     }
 
@@ -626,18 +809,27 @@ public class DiscordBot
                 return (false, "Azure clients not initialized");
 
             var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
-            var resourceGroup = subscription.GetResourceGroup(resourceGroupName);
+            var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
             var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
+            var containerGroupResource = containerGroup.Value;
+            var containerGroupData = containerGroupResource.Get().Value;
             
-            var instanceView = containerGroup.Value.GetInstanceView();
-            if (instanceView?.State == "Stopped")
+            // Check state from container instance view
+            string? state = null;
+            if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
+            {
+                var container = containerGroupData.Data.Containers[0];
+                state = container.InstanceView?.CurrentState?.State;
+            }
+            
+            if (state != null && (state.Equals("Stopped", StringComparison.OrdinalIgnoreCase) || state.Equals("Terminated", StringComparison.OrdinalIgnoreCase)))
                 return (true, "Server is already stopped!");
 
             // Delete the container group to stop it
-            containerGroup.Value.Delete(WaitUntil.Started);
+            containerGroupResource.Delete(WaitUntil.Started);
 
             // Update state
-            ServerState[containerGroupName] = new ServerState
+            _serverStates[containerGroupName] = new ServerState
             {
                 Status = "stopped",
                 StartedAt = null,

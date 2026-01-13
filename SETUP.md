@@ -9,6 +9,24 @@ Complete step-by-step guide to deploy your Valheim server on Azure.
 3. **.NET 8.0 SDK** installed ([Download](https://dotnet.microsoft.com/download))
 4. **Azure Functions Core Tools** ([Download](https://docs.microsoft.com/azure/azure-functions/functions-run-local))
 5. **Discord Account** and access to create a bot
+6. **PowerShell Execution Policy** configured (see below)
+
+### Configure PowerShell Execution Policy
+
+Before running the deployment script, you need to allow PowerShell to run local scripts:
+
+```powershell
+# Recommended: Allow local scripts for your user account only
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+**Alternative:** If you prefer not to change the policy, you can bypass it for a single execution:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\deploy.ps1 -ResourceGroupName "valheim-server-rg" ...
+```
+
+For more details, see [DEPLOYMENT_TROUBLESHOOTING.md](DEPLOYMENT_TROUBLESHOOTING.md).
 
 ## Step 1: Create Discord Bot
 
@@ -17,18 +35,20 @@ Complete step-by-step guide to deploy your Valheim server on Azure.
 3. Name it (e.g., "Valheim Server Bot")
 4. Go to **"Bot"** section
 5. Click **"Add Bot"**
-6. Copy the **Bot Token** (you'll need this later)
+6. Copy the **Bot Token** (you'll need this for deployment)
 7. Under **"Privileged Gateway Intents"**, enable:
    - ✅ Server Members Intent (if needed)
-8. Go to **"OAuth2" → "URL Generator"**
-9. Select scopes:
-   - ✅ `bot`
-   - ✅ `applications.commands`
-10. Select permissions:
+8. Go to **"General Information"** section
+9. Copy the **Public Key** (you'll need this for deployment - it's a 64-character hex string)
+10. Go to **"OAuth2" → "URL Generator"**
+11. Select scopes:
+    - ✅ `bot`
+    - ✅ `applications.commands`
+12. Select permissions:
     - ✅ Send Messages
     - ✅ Use Slash Commands
-11. Copy the generated URL and open it in a browser
-12. Select your Discord server and authorize
+13. Copy the generated URL and open it in a browser
+14. Select your Discord server and authorize
 
 ## Step 2: Login to Azure
 
@@ -47,10 +67,13 @@ az account set --subscription "<subscription-id>"  # Set active subscription
   -ResourceGroupName "valheim-server-rg" `
   -Location "eastus" `
   -DiscordBotToken "YOUR_DISCORD_BOT_TOKEN" `
+  -DiscordPublicKey "YOUR_DISCORD_PUBLIC_KEY" `
   -ServerPassword "YOUR_SERVER_PASSWORD" `
   -ServerName "My Valheim Server" `
   -AutoShutdownMinutes 120
 ```
+
+**Note:** The Discord Public Key is required and is automatically stored in Key Vault during deployment. Get it from Discord Developer Portal → Your Application → General Information → Public Key.
 
 ### Option B: Manual Deployment
 
@@ -59,6 +82,7 @@ az account set --subscription "<subscription-id>"  # Set active subscription
 $RESOURCE_GROUP = "valheim-server-rg"
 $LOCATION = "eastus"
 $DISCORD_TOKEN = "YOUR_DISCORD_BOT_TOKEN"
+$DISCORD_PUBLIC_KEY = "YOUR_DISCORD_PUBLIC_KEY"
 $SERVER_PASSWORD = "YOUR_SERVER_PASSWORD"
 $SERVER_NAME = "My Valheim Server"
 
@@ -70,6 +94,7 @@ az deployment sub create `
   --parameters resourceGroupName=$RESOURCE_GROUP `
                location=$LOCATION `
                discordBotToken=$DISCORD_TOKEN `
+               discordPublicKey=$DISCORD_PUBLIC_KEY `
                serverPassword=$SERVER_PASSWORD `
                serverName=$SERVER_NAME `
                autoShutdownMinutes=120

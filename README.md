@@ -34,6 +34,7 @@ This solution uses:
 - .NET 8.0 SDK installed
 - Azure Functions Core Tools installed
 - Discord bot token (create at https://discord.com/developers/applications)
+- PowerShell execution policy configured (see [DEPLOYMENT_TROUBLESHOOTING.md](DEPLOYMENT_TROUBLESHOOTING.md))
 
 ## Quick Start
 
