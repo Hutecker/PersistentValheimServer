@@ -22,8 +22,8 @@ public class DiscordBotTests : IDisposable
         _loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
         
         // Set up default environment variables for testing
-        SetEnvironmentVariable("KEY_VAULT_NAME", "");
         SetEnvironmentVariable("DISCORD_PUBLIC_KEY", "");
+        SetEnvironmentVariable("SERVER_PASSWORD", "test-password");
         SetEnvironmentVariable("SUBSCRIPTION_ID", "test-subscription-id");
         SetEnvironmentVariable("RESOURCE_GROUP_NAME", "test-rg");
         SetEnvironmentVariable("CONTAINER_GROUP_NAME", "test-container");

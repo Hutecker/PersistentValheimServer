@@ -222,10 +222,10 @@ if ($principalId) {
     # Check and create missing role assignments
     Write-Host "Verifying role assignments..." -ForegroundColor Yellow
     
-    # Key Vault access
+    # Key Vault access (required for Key Vault references in app settings)
     $kvAssignment = az role assignment list --assignee $principalId --scope "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.KeyVault/vaults/$keyVaultName" --query "[?roleDefinitionId=='/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6']" -o tsv 2>$null
     if (-not $kvAssignment) {
-        Write-Host "Granting Key Vault access..." -ForegroundColor Yellow
+        Write-Host "Granting Key Vault access (required for Key Vault references)..." -ForegroundColor Yellow
         az role assignment create `
             --role "Key Vault Secrets User" `
             --assignee-object-id $principalId `
@@ -475,8 +475,11 @@ try {
         Write-Host "   Deployment may still be in progress - check the Azure Portal for status." -ForegroundColor Gray
     }
     
-    # Clean up zip file
-    # Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+    # Clean up deployment zip file
+    if (Test-Path $zipFile) {
+        Write-Host "Cleaning up deployment ZIP file..." -ForegroundColor Gray
+        Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+    }
     
     Pop-Location
 } catch {
@@ -486,13 +489,96 @@ try {
     # Don't exit - let the script continue to show next steps
 }
 
-# Set Function App environment variables
-Write-Host "`nConfiguring Function App settings..." -ForegroundColor Yellow
+# Ensure secrets exist in Key Vault, then configure Function App settings with Key Vault references
+Write-Host "`nConfiguring Function App settings with Key Vault references..." -ForegroundColor Yellow
+$keyVaultName = $outputs.keyVaultName.value
+
+# Ensure secrets exist in Key Vault (add them if they don't exist)
+Write-Host "Ensuring secrets exist in Key Vault..." -ForegroundColor Gray
+
+# Check if DiscordPublicKey exists, add if not
+$existingDiscordKey = az keyvault secret show --vault-name $keyVaultName --name "DiscordPublicKey" --query "value" -o tsv 2>$null
+if (-not $existingDiscordKey) {
+    Write-Host "  Adding DiscordPublicKey to Key Vault..." -ForegroundColor Gray
+    az keyvault secret set `
+        --vault-name $keyVaultName `
+        --name "DiscordPublicKey" `
+        --value $DiscordPublicKey `
+        --output none 2>&1 | Out-Null
+} else {
+    Write-Host "  DiscordPublicKey already exists in Key Vault" -ForegroundColor Gray
+}
+
+# Check if ServerPassword exists, add if not
+$existingServerPassword = az keyvault secret show --vault-name $keyVaultName --name "ServerPassword" --query "value" -o tsv 2>$null
+if (-not $existingServerPassword) {
+    Write-Host "  Adding ServerPassword to Key Vault..." -ForegroundColor Gray
+    az keyvault secret set `
+        --vault-name $keyVaultName `
+        --name "ServerPassword" `
+        --value $ServerPassword `
+        --output none 2>&1 | Out-Null
+} else {
+    Write-Host "  ServerPassword already exists in Key Vault" -ForegroundColor Gray
+}
+
+# Build Key Vault reference URIs
+# Format: @Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/<secret-name>/)
+$keyVaultUri = "https://$keyVaultName.vault.azure.net"
+$discordPublicKeyRef = "@Microsoft.KeyVault(SecretUri=$keyVaultUri/secrets/DiscordPublicKey/)"
+$serverPasswordRef = "@Microsoft.KeyVault(SecretUri=$keyVaultUri/secrets/ServerPassword/)"
+
+# Set all app settings (using Key Vault references for secrets)
+# Note: Key Vault references contain parentheses which need special handling in PowerShell
+Write-Host "Setting Function App app settings with Key Vault references..." -ForegroundColor Gray
+
+# Set regular app settings first
+Write-Host "  Setting regular app settings..." -ForegroundColor Gray
 az functionapp config appsettings set `
     --resource-group $ResourceGroupName `
     --name $functionAppName `
-    --settings "SUBSCRIPTION_ID=$SubscriptionId" `
+    --settings `
+        "SUBSCRIPTION_ID=$SubscriptionId" `
+        "RESOURCE_GROUP_NAME=$ResourceGroupName" `
+        "SERVER_NAME=$ServerName" `
+        "STORAGE_ACCOUNT_NAME=$storageAccountName" `
+        "FILE_SHARE_NAME=$fileShareName" `
+        "LOCATION=$Location" `
+        "AUTO_SHUTDOWN_MINUTES=$AutoShutdownMinutes" `
+        "CONTAINER_GROUP_NAME=$containerGroupName" `
     --output none
+
+# Set Key Vault reference settings separately (they contain parentheses which need special handling)
+Write-Host "  Setting Key Vault reference settings..." -ForegroundColor Gray
+# Build the Key Vault references
+$discordKeyRef = "@Microsoft.KeyVault(SecretUri=$keyVaultUri/secrets/DiscordPublicKey/)"
+$serverPasswordRef = "@Microsoft.KeyVault(SecretUri=$keyVaultUri/secrets/ServerPassword/)"
+
+# Use cmd /c to bypass PowerShell's parsing of parentheses
+$discordCmd = "az functionapp config appsettings set --resource-group `"$ResourceGroupName`" --name `"$functionAppName`" --set `"DISCORD_PUBLIC_KEY=$discordKeyRef`" --output none"
+$result1 = cmd /c $discordCmd 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ⚠️  Warning: Failed to set DISCORD_PUBLIC_KEY" -ForegroundColor Yellow
+    Write-Host "  Error: $result1" -ForegroundColor Red
+} else {
+    Write-Host "  ✅ DISCORD_PUBLIC_KEY set successfully" -ForegroundColor Green
+}
+
+$serverPasswordCmd = "az functionapp config appsettings set --resource-group `"$ResourceGroupName`" --name `"$functionAppName`" --set `"SERVER_PASSWORD=$serverPasswordRef`" --output none"
+$result2 = cmd /c $serverPasswordCmd 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ⚠️  Warning: Failed to set SERVER_PASSWORD" -ForegroundColor Yellow
+    Write-Host "  Error: $result2" -ForegroundColor Red
+} else {
+    Write-Host "  ✅ SERVER_PASSWORD set successfully" -ForegroundColor Green
+}
+
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✅ Function App settings configured successfully with Key Vault references" -ForegroundColor Green
+    Write-Host "   Secrets are stored in Key Vault and referenced by the Function App" -ForegroundColor Gray
+} else {
+    Write-Host "⚠️  Warning: Some app settings may not have been set correctly" -ForegroundColor Yellow
+}
 
 # Register Discord commands
 Write-Host "`nDiscord Bot Setup:" -ForegroundColor Cyan

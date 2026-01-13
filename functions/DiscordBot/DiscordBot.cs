@@ -17,7 +17,6 @@ using Azure.ResourceManager.ContainerInstance.Models;
 using Azure.ResourceManager.Resources;
 using Azure.ResourceManager.Storage;
 using Azure.ResourceManager.Storage.Models;
-using Azure.Security.KeyVault.Secrets;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -29,7 +28,6 @@ public class DiscordBot
 {
     private readonly ILogger _logger;
     private static readonly DefaultAzureCredential Credential = new();
-    private static SecretClient? _secretClient;
     private static ArmClient? _armClient;
     private static readonly Dictionary<string, ServerState> _serverStates = new();
 
@@ -48,13 +46,6 @@ public class DiscordBot
 
     private void InitializeClients()
     {
-        var keyVaultName = Environment.GetEnvironmentVariable("KEY_VAULT_NAME");
-        if (!string.IsNullOrEmpty(keyVaultName))
-        {
-            var kvUri = new Uri($"https://{keyVaultName}.vault.azure.net");
-            _secretClient = new SecretClient(kvUri, Credential);
-        }
-
         _armClient = new ArmClient(Credential);
     }
 
@@ -154,27 +145,8 @@ public class DiscordBot
                 return false;
             }
 
-            // Get Discord public key from Key Vault or environment variable
-            string? publicKeyHex = null;
-            
-            if (_secretClient != null)
-            {
-                try
-                {
-                    var publicKeySecret = _secretClient.GetSecret("DiscordPublicKey");
-                    publicKeyHex = publicKeySecret.Value.Value;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Could not retrieve Discord public key from Key Vault");
-                }
-            }
-            
-            // Fallback to environment variable
-            if (string.IsNullOrEmpty(publicKeyHex))
-            {
-                publicKeyHex = Environment.GetEnvironmentVariable("DISCORD_PUBLIC_KEY");
-            }
+            // Get Discord public key from environment variable (app setting)
+            var publicKeyHex = Environment.GetEnvironmentVariable("DISCORD_PUBLIC_KEY");
 
             if (string.IsNullOrEmpty(publicKeyHex))
             {
@@ -517,11 +489,12 @@ public class DiscordBot
                 _logger.LogInformation($"Container group doesn't exist yet: {ex.Message}");
             }
 
-            // Get secrets from Key Vault
-            if (_secretClient == null)
-                return (false, "Key Vault client not initialized");
-
-            var serverPassword = _secretClient.GetSecret("ServerPassword").Value.Value;
+            // Get secrets from environment variables (app settings)
+            var serverPassword = Environment.GetEnvironmentVariable("SERVER_PASSWORD");
+            if (string.IsNullOrEmpty(serverPassword))
+            {
+                return (false, "SERVER_PASSWORD app setting not configured");
+            }
             var serverName = Environment.GetEnvironmentVariable("SERVER_NAME") ?? "Valheim Server";
             var storageAccountName = Environment.GetEnvironmentVariable("STORAGE_ACCOUNT_NAME");
             var fileShareName = Environment.GetEnvironmentVariable("FILE_SHARE_NAME");
