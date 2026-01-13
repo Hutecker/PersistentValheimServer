@@ -238,55 +238,46 @@ try {
     $zipSize = (Get-Item $zipFile).Length / 1MB
     Write-Host "  ZIP created: $([math]::Round($zipSize, 2)) MB" -ForegroundColor Green
     
-    Write-Host "Deploying Function App code via Azure CLI..." -ForegroundColor Yellow
-    Write-Host "  Note: Deployment may appear to hang due to Azure CLI status polling issues with Flex Consumption" -ForegroundColor Gray
-    Write-Host "  The deployment is actually proceeding in the background. We'll verify completion separately." -ForegroundColor Gray
+    Write-Host "Deploying Function App code to Flex Consumption..." -ForegroundColor Yellow
+    Write-Host "  Flex Consumption uses blob container deployment (One Deploy method)" -ForegroundColor Gray
     Write-Host ""
     
-    $deploymentJob = Start-Job -ScriptBlock {
-        param($rg, $name, $zip)
-        $output = az functionapp deployment source config-zip `
-            --resource-group $rg `
-            --name $name `
-            --src $zip `
-            --timeout 300 2>&1
-        return $output
-    } -ArgumentList $ResourceGroupName, $functionAppName, $zipFile
+    $functionStorageAccountName = $outputs.functionStorageAccountName.value
+    $deploymentContainerName = "app-package-$($functionAppName.ToLower().Substring(0, [Math]::Min(32, $functionAppName.Length)))"
     
-    Write-Host "  Deployment started (running in background)..." -ForegroundColor Gray
-    Write-Host "  Waiting for deployment to complete (max 5 minutes)..." -ForegroundColor Gray
+    Write-Host "  Storage Account: $functionStorageAccountName" -ForegroundColor Gray
+    Write-Host "  Container: $deploymentContainerName" -ForegroundColor Gray
+    Write-Host ""
     
-    $timeout = 300
-    $elapsed = 0
-    $checkInterval = 15
+    Write-Host "  Uploading deployment package to blob container..." -ForegroundColor Yellow
+    $storageKey = az storage account keys list `
+        --resource-group $ResourceGroupName `
+        --account-name $functionStorageAccountName `
+        --query "[0].value" `
+        --output tsv
     
-    while ($elapsed -lt $timeout) {
-        Start-Sleep -Seconds $checkInterval
-        $elapsed += $checkInterval
-        
-        if ($deploymentJob.State -eq "Completed") {
-            $deployOutput = Receive-Job -Job $deploymentJob
-            Remove-Job -Job $deploymentJob
-            Write-Host "  Deployment command completed" -ForegroundColor Green
-            break
-        }
-        
-        Write-Host "  Checking deployment status... ($elapsed seconds)" -ForegroundColor Gray
-        $functions = az functionapp function list --name $functionAppName --resource-group $ResourceGroupName --output json 2>$null | ConvertFrom-Json
-        
-        if ($functions -and $functions.Count -gt 0) {
-            Write-Host "  ✅ Functions detected! Deployment succeeded." -ForegroundColor Green
-            Stop-Job -Job $deploymentJob -ErrorAction SilentlyContinue
-            Remove-Job -Job $deploymentJob -ErrorAction SilentlyContinue
-            break
-        }
+    if (-not $storageKey) {
+        throw "Failed to retrieve storage account key"
     }
     
-    if ($deploymentJob.State -eq "Running") {
-        Write-Host "  ⚠️  Deployment command timed out, but checking if deployment actually succeeded..." -ForegroundColor Yellow
-        Stop-Job -Job $deploymentJob -ErrorAction SilentlyContinue
-        Remove-Job -Job $deploymentJob -ErrorAction SilentlyContinue
+    $blobName = "functionapp.zip"
+    
+    az storage blob upload `
+        --account-name $functionStorageAccountName `
+        --account-key $storageKey `
+        --container-name $deploymentContainerName `
+        --name $blobName `
+        --file $zipFile `
+        --overwrite `
+        --output none
+    
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to upload deployment package to blob container"
     }
+    
+    Write-Host "  ✅ Package uploaded successfully" -ForegroundColor Green
+    Write-Host "  Function App will automatically detect and deploy the package" -ForegroundColor Gray
+    Write-Host "  This may take 1-2 minutes..." -ForegroundColor Gray
     
     Write-Host "`nVerifying deployment..." -ForegroundColor Cyan
     Start-Sleep -Seconds 5
