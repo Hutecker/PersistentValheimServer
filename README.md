@@ -32,6 +32,8 @@ This solution uses:
 - Azure subscription
 - Azure CLI installed and logged in
 - .NET 8.0 SDK installed
+- **Azure Functions Core Tools** (installed automatically by deploy script, or manually: `npm install -g azure-functions-core-tools@4`)
+- Node.js (required for Azure Functions Core Tools installation)
 - Discord bot token and public key (create at https://discord.com/developers/applications)
 - PowerShell execution policy configured:
   ```powershell
@@ -63,7 +65,9 @@ Run the deployment script:
   -DiscordPublicKey "YOUR_PUBLIC_KEY" `
   -ServerPassword "YOUR_SERVER_PASSWORD" `
   -ServerName "Your Server Name" `
-  -AutoShutdownMinutes 120
+  -AutoShutdownMinutes 120 `
+  -MonthlyBudgetLimit 30.0 `
+  -BudgetAlertEmail "your-email@example.com"
 ```
 
 The script will:
@@ -132,8 +136,67 @@ The server will automatically shut down after the configured timeout (default: 2
 - **Running**: ~$0.10-0.15/hour (ACI + Storage)
 - **Stopped**: ~$0.01/day (Storage only)
 - **Monthly (10 hours/week)**: ~$4-6/month
+- **Budget & Alerts**: **FREE** (no additional cost)
+
+### Budget Alerts
+
+The deployment includes budget monitoring with alerts at:
+- **50%** of budget ($15) - Early warning
+- **75%** of budget ($22.50) - Approaching limit
+- **90%** of budget ($27) - Critical warning
+- **100%** of budget ($30) - Budget exceeded
+- **80% forecasted** - Predictive alert based on spending trends
+
+Alerts are sent via email (if `-BudgetAlertEmail` is provided during deployment).
+
+## Troubleshooting
+
+### Functions Not Appearing in Portal
+
+If functions don't appear after deployment:
+
+1. **Wait 1-2 minutes** - Functions may take time to register
+2. **Check Application Insights logs** for errors during startup
+3. **Verify deployment method** - Flex Consumption requires "One Deploy" (not zip deploy)
+4. **Check Azure Functions Core Tools** - Ensure `func --version` works
+5. **Verify app settings** - Check that all required environment variables are set
+6. **Check Function App logs**:
+   ```powershell
+   az functionapp log tail --name valheim-func --resource-group valheim-server-rg
+   ```
+
+### Deployment Issues
+
+If deployment fails:
+
+1. **Ensure Azure Functions Core Tools is installed**:
+   ```powershell
+   npm install -g azure-functions-core-tools@4 --unsafe-perm true
+   ```
+
+2. **Verify you're logged in**:
+   ```powershell
+   az account show
+   ```
+
+3. **Check Function App exists**:
+   ```powershell
+   az functionapp show --name valheim-func --resource-group valheim-server-rg
+   ```
+
+4. **Manually deploy using func**:
+   ```powershell
+   cd functions
+   func azure functionapp publish valheim-func --dotnet-isolated --csharp
+   ```
+
+### Alternative: VM-Based Approach
+
+For faster startup times and simpler management, consider using an Azure VM instead of Container Instances. See [VM_ALTERNATIVE.md](VM_ALTERNATIVE.md) for details.
 
 ## References
 
 - [Valheim Dedicated Server Guide](https://valheim.fandom.com/wiki/Dedicated_servers)
 - [Docker Image: lloesche/valheim-server](https://hub.docker.com/r/lloesche/valheim-server)
+- [Azure Functions Flex Consumption](https://learn.microsoft.com/en-us/azure/azure-functions/flex-consumption-how-to)
+- [Azure Functions One Deploy](https://learn.microsoft.com/en-us/azure/azure-functions/functions-deployment-technologies)

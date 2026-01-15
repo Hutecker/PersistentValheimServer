@@ -28,6 +28,12 @@ param containerCpu int = 2
 @description('Container memory in GB')
 param containerMemory int = 4
 
+@description('Monthly budget limit in USD (100% threshold)')
+param monthlyBudgetLimit decimal = 30.0
+
+@description('Email address for budget alerts')
+param budgetAlertEmail string = ''
+
 var storageAccountName = 'valheimsa'
 var fileShareName = 'valheim-worlds'
 var keyVaultName = 'valheim-kv'
@@ -316,6 +322,87 @@ resource functionStorageRoleAssignment 'Microsoft.Authorization/roleAssignments@
   }
 }
 
+var actionGroupName = 'valheim-budget-alerts'
+
+resource budgetActionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = if (!empty(budgetAlertEmail)) {
+  name: actionGroupName
+  location: 'global'
+  properties: {
+    groupShortName: 'valheim-budget'
+    enabled: true
+    emailReceivers: [
+      {
+        name: 'budget-alert-email'
+        emailAddress: budgetAlertEmail
+        useCommonAlertSchema: true
+      }
+    ]
+  }
+}
+
+// Budget scoped to resource group
+// Note: Budgets automatically reset monthly, so we set a long end date
+resource budget 'Microsoft.Consumption/budgets@2023-05-01' = if (!empty(budgetAlertEmail)) {
+  name: 'valheim-monthly-budget'
+  scope: resourceGroup()
+  properties: {
+    timePeriod: {
+      startDate: '${utcNow('yyyy-MM-01')}T00:00:00Z'
+      endDate: '2099-12-31T23:59:59Z' // Budgets reset monthly automatically
+    }
+    timeGrain: 'Monthly'
+    amount: monthlyBudgetLimit
+    category: 'Cost'
+    notifications: {
+      actualGreaterThan50: {
+        enabled: true
+        operator: 'GreaterThan'
+        threshold: 50
+        contactEmails: [budgetAlertEmail]
+        contactGroups: []
+        contactRoles: []
+        thresholdType: 'Actual'
+      }
+      actualGreaterThan75: {
+        enabled: true
+        operator: 'GreaterThan'
+        threshold: 75
+        contactEmails: [budgetAlertEmail]
+        contactGroups: []
+        contactRoles: []
+        thresholdType: 'Actual'
+      }
+      actualGreaterThan90: {
+        enabled: true
+        operator: 'GreaterThan'
+        threshold: 90
+        contactEmails: [budgetAlertEmail]
+        contactGroups: []
+        contactRoles: []
+        thresholdType: 'Actual'
+      }
+      actualGreaterThan100: {
+        enabled: true
+        operator: 'GreaterThan'
+        threshold: 100
+        contactEmails: [budgetAlertEmail]
+        contactGroups: []
+        contactRoles: []
+        thresholdType: 'Actual'
+      }
+      forecastedGreaterThan80: {
+        enabled: true
+        operator: 'GreaterThan'
+        threshold: 80
+        contactEmails: [budgetAlertEmail]
+        contactGroups: []
+        contactRoles: []
+        thresholdType: 'Forecasted'
+      }
+    }
+  }
+}
+
 output functionAppName string = functionApp.name
 output functionAppUrl string = 'https://${functionApp.properties.defaultHostName}'
 output storageAccountName string = storageAccount.name
@@ -324,3 +411,5 @@ output keyVaultName string = keyVaultName
 output containerGroupName string = containerGroupName
 output appInsightsName string = appInsights.name
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
+output budgetConfigured bool = !empty(budgetAlertEmail)
+output budgetLimit string = '$${string(monthlyBudgetLimit)}/month'

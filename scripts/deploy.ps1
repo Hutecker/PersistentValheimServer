@@ -29,7 +29,13 @@ param(
     [int]$AutoShutdownMinutes = 120,
     
     [Parameter(Mandatory=$false)]
-    [string]$SubscriptionId = ""
+    [string]$SubscriptionId = "",
+    
+    [Parameter(Mandatory=$false)]
+    [decimal]$MonthlyBudgetLimit = 30.0,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$BudgetAlertEmail = ""
 )
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -72,50 +78,54 @@ if ($rgExists -eq "false") {
     Write-Host "Resource group already exists" -ForegroundColor Green
 }
 
-    Write-Host "`nDeploying infrastructure..." -ForegroundColor Yellow
-    $deploymentName = "valheim-deployment-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+Write-Host "`nDeploying infrastructure..." -ForegroundColor Yellow
+$deploymentName = "valheim-deployment-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 
+Write-Host "Using Incremental deployment mode (preserves existing resources not in template)" -ForegroundColor Gray
 
-    Write-Host "Using Incremental deployment mode (preserves existing resources not in template)" -ForegroundColor Gray
-
-    try {
+try {
+        $deployParams = @(
+            "resourceGroupName=$ResourceGroupName",
+            "location=$Location",
+            "discordBotToken=$DiscordBotToken",
+            "discordPublicKey=$DiscordPublicKey",
+            "serverPassword=$ServerPassword",
+            "serverName=$ServerName",
+            "autoShutdownMinutes=$AutoShutdownMinutes",
+            "monthlyBudgetLimit=$MonthlyBudgetLimit"
+        )
+        
+        if (-not [string]::IsNullOrWhiteSpace($BudgetAlertEmail)) {
+            $deployParams += "budgetAlertEmail=$BudgetAlertEmail"
+        }
+        
         $deployOutput = az deployment group create `
             --resource-group $ResourceGroupName `
             --name $deploymentName `
             --template-file "infrastructure/main.bicep" `
             --mode Incremental `
-        --parameters resourceGroupName=$ResourceGroupName `
-                     location=$Location `
-                     discordBotToken=$DiscordBotToken `
-                     discordPublicKey=$DiscordPublicKey `
-                     serverPassword=$ServerPassword `
-                     serverName=$ServerName `
-                     autoShutdownMinutes=$AutoShutdownMinutes `
-        --output json 2>&1
-    
-        $deployOutputString = $deployOutput | Out-String
-        if ($deployOutputString -match "RoleAssignmentUpdateNotPermitted") {
-            Write-Host "`n⚠️  Role assignment update errors detected" -ForegroundColor Yellow
-            Write-Host "This happens when old role assignments exist from previous deployments." -ForegroundColor Gray
-            Write-Host "Role assignments are now managed in Bicep, but old ones need to be cleaned up first." -ForegroundColor Gray
-            Write-Host ""
-            Write-Host "To fix this, delete the conflicting role assignments in the Azure Portal:" -ForegroundColor Yellow
-            Write-Host "  1. Go to the resource group: $ResourceGroupName" -ForegroundColor Gray
-            Write-Host "  2. Navigate to 'Access control (IAM)'" -ForegroundColor Gray
-            Write-Host "  3. Remove any role assignments for the Function App's managed identity" -ForegroundColor Gray
-            Write-Host "  4. Retry the deployment" -ForegroundColor Gray
-            throw "Deployment failed due to role assignment conflicts. Clean up old role assignments and retry."
-        }
-    
+            --parameters $deployParams `
+            --output json 2>&1
+
+    $deployOutputString = $deployOutput | Out-String
+    if ($deployOutputString -match "RoleAssignmentUpdateNotPermitted") {
+        Write-Host "`n⚠️  Role assignment update errors detected" -ForegroundColor Yellow
+        Write-Host "This happens when old role assignments exist from previous deployments." -ForegroundColor Gray
+        Write-Host "Role assignments are now managed in Bicep, but old ones need to be cleaned up first." -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "To fix this, delete the conflicting role assignments in the Azure Portal:" -ForegroundColor Yellow
+        Write-Host "  1. Go to the resource group: $ResourceGroupName" -ForegroundColor Gray
+        Write-Host "  2. Navigate to 'Access control (IAM)'" -ForegroundColor Gray
+        Write-Host "  3. Remove any role assignments for the Function App's managed identity" -ForegroundColor Gray
+        Write-Host "  4. Retry the deployment" -ForegroundColor Gray
+        throw "Deployment failed due to role assignment conflicts. Clean up old role assignments and retry."
+    }
+
     if ($LASTEXITCODE -ne 0) {
         throw "Deployment failed with exit code $LASTEXITCODE"
     }
     
     Write-Host "Infrastructure deployed successfully" -ForegroundColor Green
-    
-    if ($LASTEXITCODE -ne 0) {
-        throw "Deployment failed with exit code $LASTEXITCODE"
-    }
 } catch {
     Write-Host "Error deploying infrastructure: $_" -ForegroundColor Red
     exit 1
@@ -136,6 +146,11 @@ Write-Host "  Function App: $functionAppName"
 Write-Host "  Function App URL: $functionAppUrl"
 Write-Host "  Storage Account: $($outputs.storageAccountName.value)"
 Write-Host "  Key Vault: $($outputs.keyVaultName.value)"
+if ($outputs.budgetConfigured.value) {
+    Write-Host "  Budget: $($outputs.budgetLimit.value) (alerts configured)" -ForegroundColor Green
+} elseif (-not [string]::IsNullOrWhiteSpace($BudgetAlertEmail)) {
+    Write-Host "  Budget: Not configured (email may be invalid)" -ForegroundColor Yellow
+}
 
 Write-Host "`nDeploying Function App code..." -ForegroundColor Yellow
 Push-Location functions
@@ -180,15 +195,40 @@ try {
         }
     }
     
-    Write-Host "Publishing project..." -ForegroundColor Yellow
-    dotnet publish --configuration Release --no-build --output "bin\Release\net8.0\publish" --self-contained false
+    # Check for Azure Functions Core Tools (required for Flex Consumption One Deploy)
+    Write-Host "Checking for Azure Functions Core Tools..." -ForegroundColor Yellow
+    $funcVersion = func --version 2>$null
+    if (-not $funcVersion) {
+        Write-Host "⚠️  Azure Functions Core Tools not found. Installing via npm..." -ForegroundColor Yellow
+        Write-Host "   This is required for Flex Consumption deployment (One Deploy method)" -ForegroundColor Gray
+        
+        # Check for npm/node
+        $nodeVersion = node --version 2>$null
+        if (-not $nodeVersion) {
+            Write-Host "❌ Node.js not found. Please install Node.js from https://nodejs.org/" -ForegroundColor Red
+            Write-Host "   Then run: npm install -g azure-functions-core-tools@4 --unsafe-perm true" -ForegroundColor Yellow
+            throw "Azure Functions Core Tools required for deployment"
+        }
+        
+        Write-Host "   Installing Azure Functions Core Tools..." -ForegroundColor Gray
+        npm install -g azure-functions-core-tools@4 --unsafe-perm true
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install Azure Functions Core Tools"
+        }
+        Write-Host "✅ Azure Functions Core Tools installed" -ForegroundColor Green
+    } else {
+        Write-Host "✅ Azure Functions Core Tools version: $funcVersion" -ForegroundColor Green
+    }
+    
+    Write-Host "`nBuilding and publishing project..." -ForegroundColor Yellow
+    dotnet publish --configuration Release --output "bin\Release\net8.0\publish"
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to publish project"
     }
     
     Write-Host "Verifying published files..." -ForegroundColor Yellow
     $publishDir = "bin\Release\net8.0\publish"
-    $requiredFiles = @("host.json", "ValheimServerFunctions.dll", "functions.metadata", "extensions.json")
+    $requiredFiles = @("host.json", "ValheimServerFunctions.dll")
     foreach ($file in $requiredFiles) {
         $filePath = Join-Path $publishDir $file
         if (-not (Test-Path $filePath)) {
@@ -198,105 +238,69 @@ try {
     }
     Write-Host "✅ All required files present" -ForegroundColor Green
     
-    Write-Host "Creating deployment package..." -ForegroundColor Yellow
-    
-    $zipFile = "..\function-app-deploy.zip"
-    
-    if (Test-Path $zipFile) {
-        Remove-Item $zipFile -Force
-    }
-    
-    Write-Host "Creating deployment ZIP with Linux-compatible paths..." -ForegroundColor Yellow
-    Write-Host "  Source: $publishDir" -ForegroundColor Gray
-    
-    Add-Type -AssemblyName System.IO.Compression
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    
-    $publishDirResolved = Resolve-Path $publishDir
-    $zipPath = (Resolve-Path "..").Path + "\function-app-deploy.zip"
-    $zipStream = [System.IO.File]::Create($zipPath)
-    $archive = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create)
-    
-    $files = Get-ChildItem $publishDirResolved -Recurse -File
-    foreach ($file in $files) {
-        $relativePath = $file.FullName.Substring($publishDirResolved.Path.Length + 1).Replace("\", "/")
-        $entry = $archive.CreateEntry($relativePath)
-        $entryStream = $entry.Open()
-        $fileStream = [System.IO.File]::OpenRead($file.FullName)
-        $fileStream.CopyTo($entryStream)
-        $fileStream.Close()
-        $entryStream.Close()
-    }
-    
-    $archive.Dispose()
-    $zipStream.Close()
-    
-    if (-not (Test-Path $zipFile)) {
-        throw "Failed to create deployment package"
-    }
-    
-    $zipSize = (Get-Item $zipFile).Length / 1MB
-    Write-Host "  ZIP created: $([math]::Round($zipSize, 2)) MB" -ForegroundColor Green
-    
-    Write-Host "Deploying Function App code to Flex Consumption..." -ForegroundColor Yellow
-    Write-Host "  Flex Consumption uses blob container deployment (One Deploy method)" -ForegroundColor Gray
+    Write-Host "`nDeploying Function App using One Deploy (Flex Consumption)..." -ForegroundColor Yellow
+    Write-Host "  Function App: $functionAppName" -ForegroundColor Gray
+    Write-Host "  Resource Group: $ResourceGroupName" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  This uses 'func azure functionapp publish' which properly handles Flex Consumption" -ForegroundColor Gray
+    Write-Host "  The deployment will use the blob container configured in the Function App" -ForegroundColor Gray
     Write-Host ""
     
-    $functionStorageAccountName = $outputs.functionStorageAccountName.value
-    $deploymentContainerName = "app-package-$($functionAppName.ToLower().Substring(0, [Math]::Min(32, $functionAppName.Length)))"
-    
-    Write-Host "  Storage Account: $functionStorageAccountName" -ForegroundColor Gray
-    Write-Host "  Container: $deploymentContainerName" -ForegroundColor Gray
-    Write-Host ""
-    
-    Write-Host "  Uploading deployment package to blob container..." -ForegroundColor Yellow
-    $storageKey = az storage account keys list `
-        --resource-group $ResourceGroupName `
-        --account-name $functionStorageAccountName `
-        --query "[0].value" `
-        --output tsv
-    
-    if (-not $storageKey) {
-        throw "Failed to retrieve storage account key"
-    }
-    
-    $blobName = "functionapp.zip"
-    
-    az storage blob upload `
-        --account-name $functionStorageAccountName `
-        --account-key $storageKey `
-        --container-name $deploymentContainerName `
-        --name $blobName `
-        --file $zipFile `
-        --overwrite `
-        --output none
-    
+    # Use func azure functionapp publish for proper One Deploy
+    func azure functionapp publish $functionAppName --dotnet-isolated --csharp
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to upload deployment package to blob container"
-    }
-    
-    Write-Host "  ✅ Package uploaded successfully" -ForegroundColor Green
-    Write-Host "  Function App will automatically detect and deploy the package" -ForegroundColor Gray
-    Write-Host "  This may take 1-2 minutes..." -ForegroundColor Gray
-    
-    Write-Host "`nVerifying deployment..." -ForegroundColor Cyan
-    Start-Sleep -Seconds 5
-    $functions = az functionapp function list --name $functionAppName --resource-group $ResourceGroupName --output json 2>$null | ConvertFrom-Json
-    
-    if ($functions -and $functions.Count -gt 0) {
-        Write-Host "✅ Function App code deployed successfully! Found $($functions.Count) function(s):" -ForegroundColor Green
-        foreach ($func in $functions) {
-            Write-Host "  ✅ $($func.name)" -ForegroundColor Green
+        Write-Host "⚠️  Deployment may have failed. Checking status..." -ForegroundColor Yellow
+        
+        # Try alternative: use func with explicit publish directory
+        Write-Host "  Trying alternative deployment method..." -ForegroundColor Gray
+        Push-Location $publishDir
+        func azure functionapp publish $functionAppName --dotnet-isolated --csharp
+        $deployExitCode = $LASTEXITCODE
+        Pop-Location
+        
+        if ($deployExitCode -ne 0) {
+            Write-Host "❌ Deployment failed. Error code: $deployExitCode" -ForegroundColor Red
+            Write-Host "`nTroubleshooting tips:" -ForegroundColor Yellow
+            Write-Host "  1. Ensure you're logged in: az login" -ForegroundColor Gray
+            Write-Host "  2. Check Function App exists: az functionapp show --name $functionAppName --resource-group $ResourceGroupName" -ForegroundColor Gray
+            Write-Host "  3. Verify deployment storage is configured in the Function App" -ForegroundColor Gray
+            Write-Host "  4. Check Application Insights logs for errors" -ForegroundColor Gray
+            throw "Function App deployment failed"
         }
-    } else {
-        Write-Host "⚠️  Functions not yet visible. They may appear in 30-60 seconds." -ForegroundColor Yellow
-        Write-Host "   Check Azure Portal or run: az functionapp function list --name $functionAppName --resource-group $ResourceGroupName" -ForegroundColor Gray
-        Write-Host "   Deployment may still be in progress - check the Azure Portal for status." -ForegroundColor Gray
     }
     
-    if (Test-Path $zipFile) {
-        Write-Host "Cleaning up deployment ZIP file..." -ForegroundColor Gray
-        Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+    Write-Host "`n✅ Deployment completed successfully!" -ForegroundColor Green
+    Write-Host "`nVerifying functions..." -ForegroundColor Cyan
+    Start-Sleep -Seconds 10
+    
+    # Wait and retry checking for functions (they may take time to appear)
+    $maxRetries = 6
+    $retryCount = 0
+    $functions = $null
+    
+    while ($retryCount -lt $maxRetries) {
+        $functions = az functionapp function list --name $functionAppName --resource-group $ResourceGroupName --output json 2>$null | ConvertFrom-Json
+        
+        if ($functions -and $functions.Count -gt 0) {
+            Write-Host "✅ Function App deployed successfully! Found $($functions.Count) function(s):" -ForegroundColor Green
+            foreach ($func in $functions) {
+                Write-Host "  ✅ $($func.name)" -ForegroundColor Green
+            }
+            break
+        }
+        
+        $retryCount++
+        if ($retryCount -lt $maxRetries) {
+            Write-Host "  Waiting for functions to appear... (attempt $retryCount/$maxRetries)" -ForegroundColor Yellow
+            Start-Sleep -Seconds 10
+        }
+    }
+    
+    if (-not $functions -or $functions.Count -eq 0) {
+        Write-Host "⚠️  Functions not yet visible in Azure CLI" -ForegroundColor Yellow
+        Write-Host "   This is normal - functions may take 1-2 minutes to appear" -ForegroundColor Gray
+        Write-Host "   Check Azure Portal: https://portal.azure.com/#@/resource/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$functionAppName" -ForegroundColor Gray
+        Write-Host "   Or run: az functionapp function list --name $functionAppName --resource-group $ResourceGroupName" -ForegroundColor Gray
     }
     
     Pop-Location
