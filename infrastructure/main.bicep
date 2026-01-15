@@ -29,10 +29,13 @@ param containerCpu int = 2
 param containerMemory int = 4
 
 @description('Monthly budget limit in USD (100% threshold)')
-param monthlyBudgetLimit decimal = 30.0
+param monthlyBudgetLimit int = 30
 
 @description('Email address for budget alerts')
 param budgetAlertEmail string = ''
+
+@description('Budget start date (first day of month in YYYY-MM-DD format). Must be first of current month for monthly budgets.')
+param budgetStartDate string = '${utcNow('yyyy-MM')}-01'
 
 var storageAccountName = 'valheimsa'
 var fileShareName = 'valheim-worlds'
@@ -266,15 +269,23 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   ]
 }
 
-var keyVaultRoleDefId = '4633458b-17de-408a-b874-0445c86b69e6'
-var containerInstanceRoleDefId = '5d977122-f97e-4b4d-a52f-6b43003ddb4d'
-var storageAccountRoleDefId = '17d1049b-9a84-46fb-8f53-869881c3d3ab'
-var storageFileRoleDefId = 'a7264617-510b-434b-a828-9731dc254ea7'
-var storageBlobRoleDefId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+// Role definition IDs (Azure built-in roles)
+var keyVaultRoleDefId = '4633458b-17de-408a-b874-0445c86b69e6' // Key Vault Secrets User
+var containerInstanceRoleDefId = '5d977122-f97e-4b4d-a52f-6b43003ddb4d' // Azure Container Instances Contributor Role
+var storageAccountRoleDefId = '17d1049b-9a84-46fb-8f53-869881c3d3ab' // Storage Account Contributor
+var storageFileRoleDefId = 'a7264617-510b-434b-a828-9731dc254ea7' // Storage File Data SMB Share Elevated Contributor
+var storageBlobRoleDefId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Storage Blob Data Owner
+
+// Role assignments for Function App managed identity
+// Key fix: explicit dependsOn ensures identity is stable before assignment
+// Using fully-qualified guid() names prevents ARM update conflicts
 
 resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, functionApp.id, keyVaultRoleDefId)
+  name: guid(subscription().subscriptionId, resourceGroup().id, keyVault.id, functionAppName, keyVaultRoleDefId)
   scope: keyVault
+  dependsOn: [
+    functionApp
+  ]
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultRoleDefId)
     principalId: functionApp.identity.principalId
@@ -283,8 +294,11 @@ resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04
 }
 
 resource containerInstanceRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(resourceGroup().id, functionApp.id, containerInstanceRoleDefId)
+  name: guid(subscription().subscriptionId, resourceGroup().id, functionAppName, containerInstanceRoleDefId)
   scope: resourceGroup()
+  dependsOn: [
+    functionApp
+  ]
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', containerInstanceRoleDefId)
     principalId: functionApp.identity.principalId
@@ -293,8 +307,11 @@ resource containerInstanceRoleAssignment 'Microsoft.Authorization/roleAssignment
 }
 
 resource storageAccountRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, functionApp.id, storageAccountRoleDefId)
+  name: guid(subscription().subscriptionId, resourceGroup().id, storageAccount.id, functionAppName, storageAccountRoleDefId)
   scope: storageAccount
+  dependsOn: [
+    functionApp
+  ]
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageAccountRoleDefId)
     principalId: functionApp.identity.principalId
@@ -303,8 +320,11 @@ resource storageAccountRoleAssignment 'Microsoft.Authorization/roleAssignments@2
 }
 
 resource storageFileRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, functionApp.id, storageFileRoleDefId)
+  name: guid(subscription().subscriptionId, resourceGroup().id, storageAccount.id, functionAppName, storageFileRoleDefId)
   scope: storageAccount
+  dependsOn: [
+    functionApp
+  ]
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageFileRoleDefId)
     principalId: functionApp.identity.principalId
@@ -313,8 +333,11 @@ resource storageFileRoleAssignment 'Microsoft.Authorization/roleAssignments@2022
 }
 
 resource functionStorageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(functionStorageAccount.id, functionApp.id, storageBlobRoleDefId)
+  name: guid(subscription().subscriptionId, resourceGroup().id, functionStorageAccount.id, functionAppName, storageBlobRoleDefId)
   scope: functionStorageAccount
+  dependsOn: [
+    functionApp
+  ]
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobRoleDefId)
     principalId: functionApp.identity.principalId
@@ -322,13 +345,13 @@ resource functionStorageRoleAssignment 'Microsoft.Authorization/roleAssignments@
   }
 }
 
-var actionGroupName = 'valheim-budget-alerts'
+var actionGroupName = 'valheim-budget'
 
 resource budgetActionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = if (!empty(budgetAlertEmail)) {
   name: actionGroupName
   location: 'global'
   properties: {
-    groupShortName: 'valheim-budget'
+    groupShortName: 'valheim-bgt'
     enabled: true
     emailReceivers: [
       {
@@ -341,14 +364,16 @@ resource budgetActionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = if (!e
 }
 
 // Budget scoped to resource group
-// Note: Budgets automatically reset monthly, so we set a long end date
+// Note: Budgets automatically reset monthly
+var budgetEndDate = '2099-12-31T23:59:59Z'
+
 resource budget 'Microsoft.Consumption/budgets@2023-05-01' = if (!empty(budgetAlertEmail)) {
   name: 'valheim-monthly-budget'
   scope: resourceGroup()
   properties: {
     timePeriod: {
-      startDate: '${utcNow('yyyy-MM-01')}T00:00:00Z'
-      endDate: '2099-12-31T23:59:59Z' // Budgets reset monthly automatically
+      startDate: '${budgetStartDate}T00:00:00Z'
+      endDate: budgetEndDate
     }
     timeGrain: 'Monthly'
     amount: monthlyBudgetLimit
@@ -412,4 +437,4 @@ output containerGroupName string = containerGroupName
 output appInsightsName string = appInsights.name
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
 output budgetConfigured bool = !empty(budgetAlertEmail)
-output budgetLimit string = '$${string(monthlyBudgetLimit)}/month'
+output budgetLimit string = '$${monthlyBudgetLimit}/month'

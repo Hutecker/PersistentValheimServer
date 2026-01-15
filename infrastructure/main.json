@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "16200176277626845598"
+      "templateHash": "155564372534661860"
     }
   },
   "parameters": {
@@ -68,6 +68,27 @@
       "metadata": {
         "description": "Container memory in GB"
       }
+    },
+    "monthlyBudgetLimit": {
+      "type": "int",
+      "defaultValue": 30,
+      "metadata": {
+        "description": "Monthly budget limit in USD (100% threshold)"
+      }
+    },
+    "budgetAlertEmail": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Email address for budget alerts"
+      }
+    },
+    "budgetStartDate": {
+      "type": "string",
+      "defaultValue": "[format('{0}-01', utcNow('yyyy-MM'))]",
+      "metadata": {
+        "description": "Budget start date (first day of month in YYYY-MM-DD format). Must be first of current month for monthly budgets."
+      }
     }
   },
   "variables": {
@@ -83,7 +104,9 @@
     "containerInstanceRoleDefId": "5d977122-f97e-4b4d-a52f-6b43003ddb4d",
     "storageAccountRoleDefId": "17d1049b-9a84-46fb-8f53-869881c3d3ab",
     "storageFileRoleDefId": "a7264617-510b-434b-a828-9731dc254ea7",
-    "storageBlobRoleDefId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+    "storageBlobRoleDefId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+    "actionGroupName": "valheim-budget",
+    "budgetEndDate": "2099-12-31T23:59:59Z"
   },
   "resources": [
     {
@@ -332,7 +355,7 @@
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[format('Microsoft.KeyVault/vaults/{0}', variables('keyVaultName'))]",
-      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('keyVaultRoleDefId'))]",
+      "name": "[guid(subscription().subscriptionId, resourceGroup().id, resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), variables('functionAppName'), variables('keyVaultRoleDefId'))]",
       "properties": {
         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultRoleDefId'))]",
         "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'full').identity.principalId]",
@@ -346,7 +369,7 @@
     {
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
-      "name": "[guid(resourceGroup().id, resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('containerInstanceRoleDefId'))]",
+      "name": "[guid(subscription().subscriptionId, resourceGroup().id, variables('functionAppName'), variables('containerInstanceRoleDefId'))]",
       "properties": {
         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('containerInstanceRoleDefId'))]",
         "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'full').identity.principalId]",
@@ -360,7 +383,7 @@
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[format('Microsoft.Storage/storageAccounts/{0}', variables('storageAccountName'))]",
-      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('storageAccountRoleDefId'))]",
+      "name": "[guid(subscription().subscriptionId, resourceGroup().id, resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), variables('functionAppName'), variables('storageAccountRoleDefId'))]",
       "properties": {
         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageAccountRoleDefId'))]",
         "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'full').identity.principalId]",
@@ -375,7 +398,7 @@
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[format('Microsoft.Storage/storageAccounts/{0}', variables('storageAccountName'))]",
-      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('storageFileRoleDefId'))]",
+      "name": "[guid(subscription().subscriptionId, resourceGroup().id, resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), variables('functionAppName'), variables('storageFileRoleDefId'))]",
       "properties": {
         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageFileRoleDefId'))]",
         "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'full').identity.principalId]",
@@ -390,7 +413,7 @@
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[format('Microsoft.Storage/storageAccounts/{0}', variables('functionStorageAccountName'))]",
-      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('functionStorageAccountName')), resourceId('Microsoft.Web/sites', variables('functionAppName')), variables('storageBlobRoleDefId'))]",
+      "name": "[guid(subscription().subscriptionId, resourceGroup().id, resourceId('Microsoft.Storage/storageAccounts', variables('functionStorageAccountName')), variables('functionAppName'), variables('storageBlobRoleDefId'))]",
       "properties": {
         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageBlobRoleDefId'))]",
         "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'full').identity.principalId]",
@@ -400,6 +423,96 @@
         "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts', variables('functionStorageAccountName'))]"
       ]
+    },
+    {
+      "condition": "[not(empty(parameters('budgetAlertEmail')))]",
+      "type": "Microsoft.Insights/actionGroups",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('actionGroupName')]",
+      "location": "global",
+      "properties": {
+        "groupShortName": "valheim-bgt",
+        "enabled": true,
+        "emailReceivers": [
+          {
+            "name": "budget-alert-email",
+            "emailAddress": "[parameters('budgetAlertEmail')]",
+            "useCommonAlertSchema": true
+          }
+        ]
+      }
+    },
+    {
+      "condition": "[not(empty(parameters('budgetAlertEmail')))]",
+      "type": "Microsoft.Consumption/budgets",
+      "apiVersion": "2023-05-01",
+      "name": "valheim-monthly-budget",
+      "properties": {
+        "timePeriod": {
+          "startDate": "[format('{0}T00:00:00Z', parameters('budgetStartDate'))]",
+          "endDate": "[variables('budgetEndDate')]"
+        },
+        "timeGrain": "Monthly",
+        "amount": "[parameters('monthlyBudgetLimit')]",
+        "category": "Cost",
+        "notifications": {
+          "actualGreaterThan50": {
+            "enabled": true,
+            "operator": "GreaterThan",
+            "threshold": 50,
+            "contactEmails": [
+              "[parameters('budgetAlertEmail')]"
+            ],
+            "contactGroups": [],
+            "contactRoles": [],
+            "thresholdType": "Actual"
+          },
+          "actualGreaterThan75": {
+            "enabled": true,
+            "operator": "GreaterThan",
+            "threshold": 75,
+            "contactEmails": [
+              "[parameters('budgetAlertEmail')]"
+            ],
+            "contactGroups": [],
+            "contactRoles": [],
+            "thresholdType": "Actual"
+          },
+          "actualGreaterThan90": {
+            "enabled": true,
+            "operator": "GreaterThan",
+            "threshold": 90,
+            "contactEmails": [
+              "[parameters('budgetAlertEmail')]"
+            ],
+            "contactGroups": [],
+            "contactRoles": [],
+            "thresholdType": "Actual"
+          },
+          "actualGreaterThan100": {
+            "enabled": true,
+            "operator": "GreaterThan",
+            "threshold": 100,
+            "contactEmails": [
+              "[parameters('budgetAlertEmail')]"
+            ],
+            "contactGroups": [],
+            "contactRoles": [],
+            "thresholdType": "Actual"
+          },
+          "forecastedGreaterThan80": {
+            "enabled": true,
+            "operator": "GreaterThan",
+            "threshold": 80,
+            "contactEmails": [
+              "[parameters('budgetAlertEmail')]"
+            ],
+            "contactGroups": [],
+            "contactRoles": [],
+            "thresholdType": "Forecasted"
+          }
+        }
+      }
     }
   ],
   "outputs": {
@@ -434,6 +547,14 @@
     "appInsightsConnectionString": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
+    },
+    "budgetConfigured": {
+      "type": "bool",
+      "value": "[not(empty(parameters('budgetAlertEmail')))]"
+    },
+    "budgetLimit": {
+      "type": "string",
+      "value": "[format('${0}/month', parameters('monthlyBudgetLimit'))]"
     }
   }
 }

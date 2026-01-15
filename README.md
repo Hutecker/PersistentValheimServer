@@ -169,22 +169,34 @@ If functions don't appear after deployment:
 
 If deployment fails:
 
-1. **Ensure Azure Functions Core Tools is installed**:
+1. **Role Assignment Errors** (`RoleAssignmentUpdateNotPermitted`):
+   - The deployment script now automatically cleans up existing role assignments before deployment
+   - If you still see this error, the cleanup may have failed - try running the cleanup script manually:
+     ```powershell
+     .\scripts\cleanup-role-assignments.ps1 -ResourceGroupName "valheim-server-rg"
+     ```
+   - **Manual fix**: Go to Azure Portal → Resource Group → Access control (IAM) → Delete role assignments for `valheim-func` managed identity
+
+2. **Budget Start Date Error**:
+   - Budget uses a fixed start date (2024-01-01) - Azure automatically handles monthly resets
+   - This ensures deployments work consistently regardless of when you deploy
+
+3. **Ensure Azure Functions Core Tools is installed**:
    ```powershell
    npm install -g azure-functions-core-tools@4 --unsafe-perm true
    ```
 
-2. **Verify you're logged in**:
+4. **Verify you're logged in**:
    ```powershell
    az account show
    ```
 
-3. **Check Function App exists**:
+5. **Check Function App exists**:
    ```powershell
    az functionapp show --name valheim-func --resource-group valheim-server-rg
    ```
 
-4. **Manually deploy using func**:
+6. **Manually deploy using func**:
    ```powershell
    cd functions
    func azure functionapp publish valheim-func --dotnet-isolated --csharp
