@@ -107,7 +107,6 @@ try {
             '--name', $deploymentName,
             '--template-file', 'infrastructure/main.bicep',
             '--mode', 'Incremental',
-            '--parameters', "resourceGroupName=$ResourceGroupName",
             '--parameters', "location=$Location",
             '--parameters', "discordBotToken=$DiscordBotToken",
             '--parameters', "discordPublicKey=$DiscordPublicKey",
@@ -132,6 +131,7 @@ try {
         
         # Execute Azure CLI command
         $deployOutput = & az $azParams 2>&1
+        $deployExitCode = $LASTEXITCODE
 
         $deployOutputString = $deployOutput | Out-String
         
@@ -151,13 +151,89 @@ try {
             throw "Deployment failed due to role assignment conflicts."
         }
 
-        if ($LASTEXITCODE -ne 0) {
-            throw "Deployment failed with exit code $LASTEXITCODE"
+        if ($deployExitCode -ne 0) {
+            Write-Host "`n❌ Infrastructure deployment failed!" -ForegroundColor Red
+            Write-Host "Exit code: $deployExitCode" -ForegroundColor Yellow
+            Write-Host ""
+            
+            # Try to parse JSON error output
+            try {
+                $errorJson = $deployOutput | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if ($errorJson) {
+                    Write-Host "Error Details:" -ForegroundColor Yellow
+                    if ($errorJson.error) {
+                        Write-Host "  Code: $($errorJson.error.code)" -ForegroundColor Red
+                        Write-Host "  Message: $($errorJson.error.message)" -ForegroundColor Red
+                        
+                        if ($errorJson.error.details) {
+                            Write-Host "`n  Additional Details:" -ForegroundColor Yellow
+                            foreach ($detail in $errorJson.error.details) {
+                                Write-Host "    - $($detail.code): $($detail.message)" -ForegroundColor Gray
+                            }
+                        }
+                    } else {
+                        # If it's not a standard error format, show the raw JSON
+                        Write-Host "  Raw error output:" -ForegroundColor Gray
+                        $deployOutput | ConvertTo-Json -Depth 10 | Write-Host -ForegroundColor Gray
+                    }
+                } else {
+                    # Not JSON, show raw output
+                    Write-Host "Error Output:" -ForegroundColor Yellow
+                    $deployOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+                }
+            } catch {
+                # If JSON parsing fails, show raw output
+                Write-Host "Error Output:" -ForegroundColor Yellow
+                $deployOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+            }
+            
+            # Try to get deployment operation details
+            Write-Host "`nAttempting to retrieve deployment operation details..." -ForegroundColor Yellow
+            try {
+                $operations = az deployment group operation list `
+                    --resource-group $ResourceGroupName `
+                    --name $deploymentName `
+                    --output json 2>$null | ConvertFrom-Json
+                
+                if ($operations) {
+                    $failedOps = $operations | Where-Object { 
+                        $_.properties.provisioningState -eq "Failed" -or 
+                        $_.properties.statusCode -ne "OK"
+                    }
+                    
+                    if ($failedOps -and $failedOps.Count -gt 0) {
+                        Write-Host "`nFailed Operations:" -ForegroundColor Red
+                        foreach ($op in $failedOps) {
+                            Write-Host "  Resource: $($op.properties.targetResource.resourceName)" -ForegroundColor Yellow
+                            Write-Host "    Type: $($op.properties.targetResource.resourceType)" -ForegroundColor Gray
+                            Write-Host "    Status: $($op.properties.provisioningState)" -ForegroundColor Red
+                            if ($op.properties.statusMessage) {
+                                Write-Host "    Message: $($op.properties.statusMessage.error.message)" -ForegroundColor Red
+                            }
+                            Write-Host ""
+                        }
+                    }
+                }
+            } catch {
+                Write-Host "  Could not retrieve operation details: $_" -ForegroundColor Gray
+            }
+            
+            Write-Host "`nTroubleshooting:" -ForegroundColor Cyan
+            Write-Host "  1. Check the error details above" -ForegroundColor Gray
+            Write-Host "  2. Review deployment in Azure Portal:" -ForegroundColor Gray
+            Write-Host "     https://portal.azure.com/#@/resource/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Resources/deployments/$deploymentName" -ForegroundColor Gray
+            Write-Host "  3. Run: az deployment group show --resource-group $ResourceGroupName --name $deploymentName --query properties.error" -ForegroundColor Gray
+            
+            throw "Infrastructure deployment failed with exit code $deployExitCode"
         }
         
         Write-Host "Infrastructure deployed successfully" -ForegroundColor Green
 } catch {
-    Write-Host "Error deploying infrastructure: $_" -ForegroundColor Red
+    Write-Host "`n❌ Error deploying infrastructure: $_" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "For more details, check:" -ForegroundColor Yellow
+    Write-Host "  - Azure Portal deployment history" -ForegroundColor Gray
+    Write-Host "  - Application Insights logs" -ForegroundColor Gray
     exit 1
 }
 

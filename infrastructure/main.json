@@ -5,17 +5,10 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "13177275440784393554"
+      "templateHash": "1475640889744642166"
     }
   },
   "parameters": {
-    "resourceGroupName": {
-      "type": "string",
-      "defaultValue": "valheim-server-rg",
-      "metadata": {
-        "description": "The name of the resource group to create"
-      }
-    },
     "location": {
       "type": "string",
       "defaultValue": "[resourceGroup().location]",
@@ -53,20 +46,6 @@
       "defaultValue": 120,
       "metadata": {
         "description": "Auto-shutdown timeout in minutes"
-      }
-    },
-    "containerCpu": {
-      "type": "int",
-      "defaultValue": 2,
-      "metadata": {
-        "description": "Container CPU cores"
-      }
-    },
-    "containerMemory": {
-      "type": "int",
-      "defaultValue": 4,
-      "metadata": {
-        "description": "Container memory in GB"
       }
     },
     "monthlyBudgetLimit": {
@@ -289,10 +268,6 @@
             {
               "name": "FUNCTIONS_EXTENSION_VERSION",
               "value": "~4"
-            },
-            {
-              "name": "FUNCTIONS_WORKER_RUNTIME",
-              "value": "dotnet-isolated"
             },
             {
               "name": "AzureWebJobsStorage",

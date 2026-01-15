@@ -1,6 +1,3 @@
-@description('The name of the resource group to create')
-param resourceGroupName string = 'valheim-server-rg'
-
 @description('The Azure region where resources will be deployed')
 param location string = resourceGroup().location
 
@@ -21,12 +18,6 @@ param serverName string = 'Valheim Server'
 
 @description('Auto-shutdown timeout in minutes')
 param autoShutdownMinutes int = 120
-
-@description('Container CPU cores')
-param containerCpu int = 2
-
-@description('Container memory in GB')
-param containerMemory int = 4
 
 @description('Monthly budget limit in USD (100% threshold)')
 param monthlyBudgetLimit int = 30
@@ -213,10 +204,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
           value: '~4'
         }
         {
-          name: 'FUNCTIONS_WORKER_RUNTIME'
-          value: 'dotnet-isolated'
-        }
-        {
+          // AzureWebJobsStorage is required for Flex Consumption (host state, triggers, logs, function indexing)
+          // Note: listKeys() is required here as storage connection strings aren't available as resource properties
           name: 'AzureWebJobsStorage'
           value: 'DefaultEndpointsProtocol=https;AccountName=${functionStorageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${listKeys(functionStorageAccount.id, '2023-01-01').keys[0].value}'
         }
