@@ -268,7 +268,6 @@ try {
     }
     
     $funcCmd = Find-FuncCommand
-    $useFuncDeploy = $false
     
     if (-not $funcCmd) {
         Write-Host "⚠️  Azure Functions Core Tools not found." -ForegroundColor Yellow
@@ -293,31 +292,32 @@ try {
         }
         
         if (-not $funcCmd) {
-            Write-Host "⚠️  Could not install or find Azure Functions Core Tools" -ForegroundColor Yellow
-            Write-Host "   Falling back to Azure CLI ZIP deployment method..." -ForegroundColor Gray
-            Write-Host "   (For best results with Flex Consumption, install: npm install -g azure-functions-core-tools@4)" -ForegroundColor Gray
-            $useFuncDeploy = $false
-        } else {
-            $useFuncDeploy = $true
+            Write-Host "❌ Azure Functions Core Tools are REQUIRED for Flex Consumption deployments" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "Flex Consumption requires 'func azure functionapp publish' for proper OneDeploy." -ForegroundColor Yellow
+            Write-Host "ZIP fallback methods do NOT work with Flex Consumption." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "To install Azure Functions Core Tools:" -ForegroundColor Cyan
+            Write-Host "  1. Install Node.js from https://nodejs.org/" -ForegroundColor Gray
+            Write-Host "  2. Run: npm install -g azure-functions-core-tools@4 --unsafe-perm true" -ForegroundColor Gray
+            Write-Host "  3. Restart PowerShell and run this deployment again" -ForegroundColor Gray
+            Write-Host ""
+            throw "Azure Functions Core Tools required for Flex Consumption deployment"
         }
-    } else {
-        $useFuncDeploy = $true
     }
     
-    if ($useFuncDeploy) {
-        # Verify func works
-        try {
-            $funcVersion = & $funcCmd --version 2>$null
-            if ($funcVersion) {
-                Write-Host "✅ Azure Functions Core Tools version: $funcVersion" -ForegroundColor Green
-            } else {
-                Write-Host "⚠️  Could not verify func version, falling back to ZIP deployment..." -ForegroundColor Yellow
-                $useFuncDeploy = $false
-            }
-        } catch {
-            Write-Host "⚠️  Error running func command, falling back to ZIP deployment..." -ForegroundColor Yellow
-            $useFuncDeploy = $false
+    # Verify func works
+    try {
+        $funcVersion = & $funcCmd --version 2>$null
+        if ($funcVersion) {
+            Write-Host "✅ Azure Functions Core Tools version: $funcVersion" -ForegroundColor Green
+        } else {
+            Write-Host "❌ Could not verify func version" -ForegroundColor Red
+            throw "Azure Functions Core Tools installation appears invalid"
         }
+    } catch {
+        Write-Host "❌ Error running func command: $_" -ForegroundColor Red
+        throw "Azure Functions Core Tools required for Flex Consumption deployment"
     }
     
     Write-Host "`nBuilding and publishing project..." -ForegroundColor Yellow
@@ -338,128 +338,37 @@ try {
     }
     Write-Host "✅ All required files present" -ForegroundColor Green
     
-    if ($useFuncDeploy) {
-        Write-Host "`nDeploying Function App using One Deploy (Flex Consumption)..." -ForegroundColor Yellow
-        Write-Host "  Function App: $functionAppName" -ForegroundColor Gray
-        Write-Host "  Resource Group: $ResourceGroupName" -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "  This uses 'func azure functionapp publish' which properly handles Flex Consumption" -ForegroundColor Gray
-        Write-Host "  The deployment will use the blob container configured in the Function App" -ForegroundColor Gray
-        Write-Host ""
-        
-        # Use func azure functionapp publish for proper One Deploy
-        & $funcCmd azure functionapp publish $functionAppName --dotnet-isolated --csharp
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "⚠️  Deployment may have failed. Trying alternative method..." -ForegroundColor Yellow
-            
-            # Try alternative: use func with explicit publish directory
-            Write-Host "  Trying with explicit publish directory..." -ForegroundColor Gray
-            Push-Location $publishDir
-            & $funcCmd azure functionapp publish $functionAppName --dotnet-isolated --csharp
-            $deployExitCode = $LASTEXITCODE
-            Pop-Location
-            
-            if ($deployExitCode -ne 0) {
-                Write-Host "⚠️  func deployment failed, falling back to ZIP deployment..." -ForegroundColor Yellow
-                $useFuncDeploy = $false
-            }
-        }
-    }
+    Write-Host "`nDeploying Function App using One Deploy (Flex Consumption)..." -ForegroundColor Yellow
+    Write-Host "  Function App: $functionAppName" -ForegroundColor Gray
+    Write-Host "  Resource Group: $ResourceGroupName" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  Using 'func azure functionapp publish' for Flex Consumption OneDeploy" -ForegroundColor Gray
+    Write-Host "  This properly configures the deployment blob container and triggers function indexing" -ForegroundColor Gray
+    Write-Host ""
     
-    if (-not $useFuncDeploy) {
-        Write-Host "`nDeploying Function App using Azure CLI ZIP deployment..." -ForegroundColor Yellow
-        Write-Host "  Function App: $functionAppName" -ForegroundColor Gray
-        Write-Host "  Resource Group: $ResourceGroupName" -ForegroundColor Gray
-        Write-Host ""
+    # Use func azure functionapp publish for proper One Deploy
+    # This is the ONLY supported method for Flex Consumption
+    & $funcCmd azure functionapp publish $functionAppName --dotnet-isolated --csharp
+    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "⚠️  Deployment may have failed. Trying with explicit publish directory..." -ForegroundColor Yellow
         
-        # Get absolute paths
-        $publishDirFull = (Resolve-Path $publishDir).Path
-        $zipPath = Join-Path $env:TEMP "valheim-func-deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
+        # Try alternative: use func with explicit publish directory
+        Push-Location $publishDir
+        & $funcCmd azure functionapp publish $functionAppName --dotnet-isolated --csharp
+        $deployExitCode = $LASTEXITCODE
+        Pop-Location
         
-        Write-Host "  Creating deployment package..." -ForegroundColor Gray
-        Write-Host "    Source: $publishDirFull" -ForegroundColor DarkGray
-        Write-Host "    ZIP: $zipPath" -ForegroundColor DarkGray
-        
-        # Remove existing ZIP if present
-        if (Test-Path $zipPath) {
-            Remove-Item $zipPath -Force
+        if ($deployExitCode -ne 0) {
+            Write-Host "❌ Function App deployment failed. Error code: $deployExitCode" -ForegroundColor Red
+            Write-Host "`nTroubleshooting tips:" -ForegroundColor Yellow
+            Write-Host "  1. Ensure you're logged in: az login" -ForegroundColor Gray
+            Write-Host "  2. Check Function App exists: az functionapp show --name $functionAppName --resource-group $ResourceGroupName" -ForegroundColor Gray
+            Write-Host "  3. Verify deployment storage is configured in the Function App" -ForegroundColor Gray
+            Write-Host "  4. Check Application Insights logs for errors" -ForegroundColor Gray
+            Write-Host "  5. Ensure FUNCTIONS_WORKER_RUNTIME and AzureWebJobsStorage are set in app settings" -ForegroundColor Gray
+            throw "Function App deployment failed"
         }
-        
-        # Create ZIP using .NET Compression (works on Windows without external tools)
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        try {
-            [System.IO.Compression.ZipFile]::CreateFromDirectory($publishDirFull, $zipPath)
-        } catch {
-            Write-Host "❌ Failed to create ZIP: $_" -ForegroundColor Red
-            throw "Failed to create deployment ZIP package: $_"
-        }
-        
-        if (-not (Test-Path $zipPath)) {
-            throw "Failed to create deployment ZIP package - file not found after creation"
-        }
-        
-        $zipSize = (Get-Item $zipPath).Length / 1MB
-        Write-Host "  ✅ ZIP created ($([math]::Round($zipSize, 2)) MB)" -ForegroundColor Green
-        
-        Write-Host "  Uploading deployment package to blob storage..." -ForegroundColor Gray
-        
-        # Get the function storage account name from outputs
-        $functionStorageAccountName = $outputs.functionStorageAccountName.value
-        
-        # Calculate deployment container name (matches Bicep logic: first 32 chars of function app name, lowercased)
-        $containerNamePrefix = ($functionAppName).ToLower()
-        if ($containerNamePrefix.Length -gt 32) {
-            $containerNamePrefix = $containerNamePrefix.Substring(0, 32)
-        }
-        $deploymentContainerName = "app-package-$containerNamePrefix"
-        
-        Write-Host "    Storage Account: $functionStorageAccountName" -ForegroundColor DarkGray
-        Write-Host "    Container: $deploymentContainerName" -ForegroundColor DarkGray
-        
-        # Get storage account key
-        $storageAccountKey = az storage account keys list --account-name $functionStorageAccountName --resource-group $ResourceGroupName --query "[0].value" --output tsv
-        if (-not $storageAccountKey) {
-            Write-Host "❌ Failed to get storage account key" -ForegroundColor Red
-            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-            throw "Function App deployment failed - could not access storage account"
-        }
-        
-        # Upload to blob container
-        Write-Host "  Uploading ZIP to blob container..." -ForegroundColor Gray
-        az storage blob upload --account-name $functionStorageAccountName --account-key $storageAccountKey --container-name $deploymentContainerName --name "deploy.zip" --file $zipPath --overwrite --output none
-        
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "❌ Failed to upload to blob storage. Error code: $LASTEXITCODE" -ForegroundColor Red
-            Write-Host "   Trying to create container if it doesn't exist..." -ForegroundColor Yellow
-            az storage container create --account-name $functionStorageAccountName --account-key $storageAccountKey --name $deploymentContainerName --output none 2>$null
-            az storage blob upload --account-name $functionStorageAccountName --account-key $storageAccountKey --container-name $deploymentContainerName --name "deploy.zip" --file $zipPath --overwrite --output none
-            
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "❌ Failed to upload to blob storage after container creation. Error code: $LASTEXITCODE" -ForegroundColor Red
-                Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-                throw "Function App deployment failed - blob upload failed"
-            }
-        }
-        
-        # Construct blob URL (Flex Consumption uses this format)
-        $blobUrl = "https://${functionStorageAccountName}.blob.core.windows.net/${deploymentContainerName}/deploy.zip"
-        
-        # Configure Function App to use the deployment package
-        Write-Host "  Configuring Function App deployment source..." -ForegroundColor Gray
-        az functionapp config appsettings set --name $functionAppName --resource-group $ResourceGroupName --settings "WEBSITE_RUN_FROM_PACKAGE=$blobUrl" --output none
-        
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "❌ Failed to configure Function App. Error code: $LASTEXITCODE" -ForegroundColor Red
-            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-            throw "Function App deployment failed - configuration failed"
-        }
-        
-        Write-Host "  ✅ Deployment package uploaded and configured" -ForegroundColor Green
-        Write-Host "  Note: Function App may take 1-2 minutes to restart and load the new package" -ForegroundColor Gray
-        
-        # Clean up ZIP
-        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-        Write-Host "  ✅ Deployment package uploaded successfully" -ForegroundColor Green
     }
     
     Write-Host "`n✅ Deployment completed successfully!" -ForegroundColor Green
