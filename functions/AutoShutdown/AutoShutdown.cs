@@ -25,7 +25,7 @@ public class AutoShutdown
     }
 
     [Function("AutoShutdown")]
-    public void Run([TimerTrigger("0 */5 * * * *")] TimerInfo myTimer)
+    public void Run([TimerTrigger("0 */60 * * * *")] TimerInfo myTimer)
     {
         var utcTimestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
         _logger.LogInformation($"C# timer trigger function executed at: {utcTimestamp}");

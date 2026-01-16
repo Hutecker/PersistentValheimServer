@@ -243,7 +243,7 @@ public class DiscordBot
                     type = 4,
                     data = new
                     {
-                        content = "[ERROR] Missing interaction data",
+                        content = "**Error** Missing interaction data",
                         flags = 64
                     }
                 };
@@ -261,7 +261,7 @@ public class DiscordBot
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error in background server start task");
-                    await SendFollowUpMessage(applicationId, interactionToken, $"[ERROR] {ex.Message}");
+                    await SendFollowUpMessage(applicationId, interactionToken, $"**Error** {ex.Message}");
                 }
             });
 
@@ -278,7 +278,7 @@ public class DiscordBot
                 type = 4,
                 data = new
                 {
-                    content = $"[ERROR] Error starting server: {ex.Message}",
+                    content = $"**Error** Error starting server: {ex.Message}",
                     flags = 64
                 }
             };
@@ -333,19 +333,19 @@ public class DiscordBot
                         return new
                         {
                             type = 4,
-                            data = new { content = $"[RUNNING] Server is **RUNNING**\nAuto-shutdown in {mins} minutes" }
+                            data = new { content = $"Server is **RUNNING**\nAuto-shutdown in {mins} minutes" }
                         };
                     }
                     return new
                     {
                         type = 4,
-                        data = new { content = "[RUNNING] Server is **RUNNING**\n[WARNING] Auto-shutdown time has passed" }
+                        data = new { content = "Server is **RUNNING**\n[WARNING] Auto-shutdown time has passed" }
                     };
                 }
                 return new
                 {
                     type = 4,
-                    data = new { content = "[RUNNING] Server is **RUNNING**" }
+                    data = new { content = "Server is **RUNNING**" }
                 };
             }
 
@@ -354,14 +354,14 @@ public class DiscordBot
                 return new
                 {
                     type = 4,
-                    data = new { content = "[STOPPED] Server is **STOPPED**\nUse `/valheim start` to start the server." }
+                    data = new { content = "Server is **STOPPED**\nUse `/valheim start` to start the server." }
                 };
             }
 
             return new
             {
                 type = 4,
-                data = new { content = $"[ERROR] Unable to determine server status.\nPlease try again or use `/valheim start` to start the server." }
+                data = new { content = $"**Error** Unable to determine server status.\nPlease try again or use `/valheim start` to start the server." }
             };
         }
         catch (Exception ex)
@@ -557,13 +557,13 @@ public class DiscordBot
                 return;
             }
 
-            await SendFollowUpMessage(applicationId, interactionToken, "[STARTING] Server is starting... This may take 2-3 minutes.");
+            await SendFollowUpMessage(applicationId, interactionToken, "Server is starting... This may take 2-3 minutes.");
 
             var (success, message) = StartServer();
             
             if (!success)
             {
-                await SendFollowUpMessage(applicationId, interactionToken, $"[ERROR] {message}");
+                await SendFollowUpMessage(applicationId, interactionToken, $"**Error** {message}");
                 return;
             }
 
@@ -585,7 +585,7 @@ public class DiscordBot
                     if (_armClient == null || string.IsNullOrEmpty(subscriptionId) || 
                         string.IsNullOrEmpty(resourceGroupName) || string.IsNullOrEmpty(containerGroupName))
                     {
-                        await SendFollowUpMessage(applicationId, interactionToken, "[ERROR] Azure clients not initialized");
+                        await SendFollowUpMessage(applicationId, interactionToken, "**Error** Azure clients not initialized");
                         return;
                     }
 
@@ -621,7 +621,7 @@ public class DiscordBot
                         };
 
                         var readyMessage = new StringBuilder();
-                        readyMessage.AppendLine("[SUCCESS] **Server is ready!**");
+                        readyMessage.AppendLine("**Success! Server is ready!**");
                         readyMessage.AppendLine();
                         
                         if (!string.IsNullOrEmpty(serverIp))
@@ -646,7 +646,7 @@ public class DiscordBot
                     else if (state != null && (state.Equals("Failed", StringComparison.OrdinalIgnoreCase) || state.Equals("Stopped", StringComparison.OrdinalIgnoreCase)))
                     {
                         await SendFollowUpMessage(applicationId, interactionToken, 
-                            $"[ERROR] Server failed to start. Status: {state}");
+                            $"**Error** Server failed to start. Status: {state}");
                         return;
                     }
 
@@ -660,7 +660,7 @@ public class DiscordBot
             }
 
             await SendFollowUpMessage(applicationId, interactionToken, 
-                "[TIMEOUT] Server is taking longer than expected to start. Please check the status with `/valheim status`");
+                "**TIMEOUT** Server is taking longer than expected to start. Please check the status with `/valheim status`");
         }
         catch (Exception ex)
         {
@@ -671,7 +671,7 @@ public class DiscordBot
                     interactionData.TryGetProperty("application_id", out var appIdElement))
                 {
                     await SendFollowUpMessage(appIdElement.GetString(), tokenElement.GetString(), 
-                        $"[ERROR] {ex.Message}");
+                        $"**Error** {ex.Message}");
                 }
             }
             catch
