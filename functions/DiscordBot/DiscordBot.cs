@@ -354,14 +354,14 @@ public class DiscordBot
                 return new
                 {
                     type = 4,
-                    data = new { content = "[STOPPED] Server is **STOPPED**" }
+                    data = new { content = "[STOPPED] Server is **STOPPED**\nUse `/valheim start` to start the server." }
                 };
             }
 
             return new
             {
                 type = 4,
-                data = new { content = $"[UNKNOWN] Server status: **{status.ToUpper()}**" }
+                data = new { content = $"[ERROR] Unable to determine server status.\nPlease try again or use `/valheim start` to start the server." }
             };
         }
         catch (Exception ex)
@@ -400,6 +400,11 @@ public class DiscordBot
                 return state.ToLower();
             }
 
+            return "stopped";
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            _logger.LogInformation("Container group does not exist - server has not been started");
             return "stopped";
         }
         catch (Exception ex)
