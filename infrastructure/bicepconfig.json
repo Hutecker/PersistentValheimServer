@@ -1,0 +1,11 @@
+{
+  "analyzers": {
+    "core": {
+      "rules": {
+        "use-resource-symbol-reference": {
+          "level": "off"
+        }
+      }
+    }
+  }
+}

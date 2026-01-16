@@ -115,7 +115,19 @@ resource discordPublicKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' =
   }
 }
 
-// Application Insights for monitoring
+// Log Analytics Workspace for Application Insights
+resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: '${appInsightsName}-ws'
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+// Application Insights for monitoring (using explicit Log Analytics workspace)
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: appInsightsName
   location: location
@@ -123,6 +135,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   properties: {
     Application_Type: 'web'
     Request_Source: 'rest'
+    WorkspaceResourceId: logAnalyticsWorkspace.id
   }
 }
 
@@ -206,6 +219,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           // AzureWebJobsStorage is required for Flex Consumption (host state, triggers, logs, function indexing)
           // Note: listKeys() is required here as storage connection strings aren't available as resource properties
+          // @suppress use-resource-symbol-reference Storage account keys must be retrieved via listKeys() - no resource symbol available
           name: 'AzureWebJobsStorage'
           value: 'DefaultEndpointsProtocol=https;AccountName=${functionStorageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${listKeys(functionStorageAccount.id, '2023-01-01').keys[0].value}'
         }
@@ -274,15 +288,12 @@ var storageFileRoleDefId = 'a7264617-510b-434b-a828-9731dc254ea7' // Storage Fil
 var storageBlobRoleDefId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Storage Blob Data Owner
 
 // Role assignments for Function App managed identity
-// Key fix: explicit dependsOn ensures identity is stable before assignment
 // Using fully-qualified guid() names prevents ARM update conflicts
+// Bicep automatically infers dependencies from functionApp.identity.principalId
 
 resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(subscription().subscriptionId, resourceGroup().id, keyVault.id, functionAppName, keyVaultRoleDefId)
   scope: keyVault
-  dependsOn: [
-    functionApp
-  ]
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultRoleDefId)
     principalId: functionApp.identity.principalId
@@ -293,9 +304,6 @@ resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04
 resource containerInstanceRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(subscription().subscriptionId, resourceGroup().id, functionAppName, containerInstanceRoleDefId)
   scope: resourceGroup()
-  dependsOn: [
-    functionApp
-  ]
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', containerInstanceRoleDefId)
     principalId: functionApp.identity.principalId
@@ -306,9 +314,6 @@ resource containerInstanceRoleAssignment 'Microsoft.Authorization/roleAssignment
 resource storageAccountRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(subscription().subscriptionId, resourceGroup().id, storageAccount.id, functionAppName, storageAccountRoleDefId)
   scope: storageAccount
-  dependsOn: [
-    functionApp
-  ]
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageAccountRoleDefId)
     principalId: functionApp.identity.principalId
@@ -319,9 +324,6 @@ resource storageAccountRoleAssignment 'Microsoft.Authorization/roleAssignments@2
 resource storageFileRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(subscription().subscriptionId, resourceGroup().id, storageAccount.id, functionAppName, storageFileRoleDefId)
   scope: storageAccount
-  dependsOn: [
-    functionApp
-  ]
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageFileRoleDefId)
     principalId: functionApp.identity.principalId
@@ -332,9 +334,6 @@ resource storageFileRoleAssignment 'Microsoft.Authorization/roleAssignments@2022
 resource functionStorageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(subscription().subscriptionId, resourceGroup().id, functionStorageAccount.id, functionAppName, storageBlobRoleDefId)
   scope: functionStorageAccount
-  dependsOn: [
-    functionApp
-  ]
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobRoleDefId)
     principalId: functionApp.identity.principalId
