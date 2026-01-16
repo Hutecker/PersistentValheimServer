@@ -105,7 +105,6 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task HandleApplicationCommand_NoType_ReturnsPong()
     {
-        // Arrange
         var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature("{}");
         SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
         
@@ -155,7 +154,6 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task InvalidSignature_ReturnsUnauthorized()
     {
-        // Arrange
         var body = "{\"type\":2,\"data\":{\"name\":\"valheim\",\"options\":[{\"name\":\"status\"}]}}";
         var (_, invalidSignature, timestamp) = DiscordSignatureHelper.GenerateInvalidSignature(body);
         var (publicKey, _, _) = DiscordSignatureHelper.GenerateValidSignature(body);
@@ -181,7 +179,6 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task ValidSignature_ProcessesRequest()
     {
-        // Arrange
         var body = "{\"type\":2,\"data\":{\"name\":\"valheim\",\"options\":[{\"name\":\"status\"}]}}";
         var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature(body);
         SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
@@ -202,13 +199,38 @@ public class DiscordBotTests : IDisposable
     }
     
     [Fact]
-    public async Task Ping_AllowsThroughWithoutValidSignature()
+    public async Task Ping_RequiresValidSignature()
     {
         var body = "{\"type\":1}";
+        var (publicKey, _, _) = DiscordSignatureHelper.GenerateValidSignature(body);
+        SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
+        
         var headers = new Dictionary<string, string>
         {
             { "X-Signature-Ed25519", "invalid" },
             { "X-Signature-Timestamp", "1234567890" }
+        };
+        
+        var functionContext = new TestFunctionContext(_loggerFactory);
+        var request = TestHttpRequestData.Create(functionContext, body, headers);
+        var bot = new DiscordBot(_loggerFactory);
+        
+        var response = await bot.Run(request, functionContext);
+        
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+    
+    [Fact]
+    public async Task Ping_WithValidSignature_ReturnsPong()
+    {
+        var body = "{\"type\":1}";
+        var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature(body);
+        SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
+        
+        var headers = new Dictionary<string, string>
+        {
+            { "X-Signature-Ed25519", signature },
+            { "X-Signature-Timestamp", timestamp }
         };
         
         var functionContext = new TestFunctionContext(_loggerFactory);
@@ -255,7 +277,6 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task StatusCommand_ReturnsChannelMessageResponse()
     {
-        // Arrange
         var body = "{\"type\":2,\"data\":{\"name\":\"valheim\",\"options\":[{\"name\":\"status\"}]},\"token\":\"test-token\",\"application_id\":\"test-app-id\"}";
         var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature(body);
         SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
@@ -282,7 +303,6 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task StartCommand_ReturnsDeferredResponse()
     {
-        // Arrange
         var body = "{\"type\":2,\"data\":{\"name\":\"valheim\",\"options\":[{\"name\":\"start\"}]},\"token\":\"test-token\",\"application_id\":\"test-app-id\"}";
         var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature(body);
         SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
@@ -312,28 +332,50 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task InvalidJson_ReturnsBadRequest()
     {
-        // Arrange
         var body = "invalid json{";
-        var headers = new Dictionary<string, string>();
+        var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature(body);
+        SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
+        
+        var headers = new Dictionary<string, string>
+        {
+            { "X-Signature-Ed25519", signature },
+            { "X-Signature-Timestamp", timestamp }
+        };
         
         var functionContext = new TestFunctionContext(_loggerFactory);
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var contentType = response.Headers.GetValues("Content-Type").FirstOrDefault();
+        Assert.Equal("application/json", contentType);
         var responseBody = TestHttpResponseData.GetBodyAsString(response);
         var responseJson = JsonSerializer.Deserialize<JsonElement>(responseBody);
         Assert.Equal("Invalid JSON", responseJson.GetProperty("error").GetString());
     }
     
     [Fact]
-    public async Task EmptyBody_HandlesGracefully()
+    public async Task UnauthorizedResponse_HasContentTypeHeader()
     {
-        // Arrange
+        var body = "{\"type\":2,\"data\":{\"name\":\"valheim\",\"options\":[{\"name\":\"status\"}]}}";
+        var headers = new Dictionary<string, string>();
+        
+        var functionContext = new TestFunctionContext(_loggerFactory);
+        var request = TestHttpRequestData.Create(functionContext, body, headers);
+        var bot = new DiscordBot(_loggerFactory);
+        
+        var response = await bot.Run(request, functionContext);
+        
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var contentType = response.Headers.GetValues("Content-Type").FirstOrDefault();
+        Assert.Equal("application/json", contentType);
+    }
+    
+    [Fact]
+    public async Task EmptyBody_ReturnsUnauthorized()
+    {
         var body = "";
         var headers = new Dictionary<string, string>();
         
@@ -341,10 +383,74 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        Assert.True(response.StatusCode == HttpStatusCode.BadRequest || response.StatusCode == HttpStatusCode.OK);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+    
+    [Fact]
+    public async Task MissingPublicKey_ReturnsUnauthorized()
+    {
+        SetEnvironmentVariable("DISCORD_PUBLIC_KEY", "");
+        
+        var body = "{\"type\":1}";
+        var headers = new Dictionary<string, string>
+        {
+            { "X-Signature-Ed25519", "a".PadLeft(128, 'a') },
+            { "X-Signature-Timestamp", "1234567890" }
+        };
+        
+        var functionContext = new TestFunctionContext(_loggerFactory);
+        var request = TestHttpRequestData.Create(functionContext, body, headers);
+        var bot = new DiscordBot(_loggerFactory);
+        
+        var response = await bot.Run(request, functionContext);
+        
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+    
+    [Fact]
+    public async Task EmptySignatureHeader_ReturnsUnauthorized()
+    {
+        var (publicKey, _, _) = DiscordSignatureHelper.GenerateValidSignature("{\"type\":1}");
+        SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
+        
+        var body = "{\"type\":1}";
+        var headers = new Dictionary<string, string>
+        {
+            { "X-Signature-Ed25519", "" },
+            { "X-Signature-Timestamp", "1234567890" }
+        };
+        
+        var functionContext = new TestFunctionContext(_loggerFactory);
+        var request = TestHttpRequestData.Create(functionContext, body, headers);
+        var bot = new DiscordBot(_loggerFactory);
+        
+        var response = await bot.Run(request, functionContext);
+        
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+    
+    [Fact]
+    public async Task EmptyTimestampHeader_ReturnsUnauthorized()
+    {
+        var (publicKey, signature, _) = DiscordSignatureHelper.GenerateValidSignature("{\"type\":1}");
+        SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
+        
+        var body = "{\"type\":1}";
+        var headers = new Dictionary<string, string>
+        {
+            { "X-Signature-Ed25519", signature },
+            { "X-Signature-Timestamp", "" }
+        };
+        
+        var functionContext = new TestFunctionContext(_loggerFactory);
+        var request = TestHttpRequestData.Create(functionContext, body, headers);
+        var bot = new DiscordBot(_loggerFactory);
+        
+        var response = await bot.Run(request, functionContext);
+        
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
     
     #endregion
@@ -354,7 +460,6 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task ValheimCommand_NoSubcommand_ReturnsErrorMessage()
     {
-        // Arrange
         var body = "{\"type\":2,\"data\":{\"name\":\"valheim\",\"options\":[]},\"token\":\"test-token\",\"application_id\":\"test-app-id\"}";
         var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature(body);
         SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
@@ -381,7 +486,6 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task ValheimCommand_UnknownSubcommand_ReturnsErrorMessage()
     {
-        // Arrange
         var body = "{\"type\":2,\"data\":{\"name\":\"valheim\",\"options\":[{\"name\":\"unknown\"}]},\"token\":\"test-token\",\"application_id\":\"test-app-id\"}";
         var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature(body);
         SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);

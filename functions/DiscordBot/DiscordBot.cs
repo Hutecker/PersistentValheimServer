@@ -60,6 +60,15 @@ public class DiscordBot
         {
             var body = await new StreamReader(req.Body).ReadToEndAsync();
             
+            if (!VerifyDiscordSignature(req, body))
+            {
+                _logger.LogWarning("Invalid Discord signature - request rejected");
+                var unauthorizedResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
+                unauthorizedResponse.Headers.Add("Content-Type", "application/json");
+                await unauthorizedResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Unauthorized" }));
+                return unauthorizedResponse;
+            }
+            
             JsonElement data;
             try
             {
@@ -72,31 +81,6 @@ public class DiscordBot
                 badRequestResponse.Headers.Add("Content-Type", "application/json");
                 await badRequestResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Invalid JSON" }));
                 return badRequestResponse;
-            }
-            
-            bool isPing = false;
-            if (data.TryGetProperty("type", out var typeElement))
-            {
-                var interactionType = typeElement.GetInt32();
-                isPing = (interactionType == 1);
-            }
-            
-            if (!isPing && !VerifyDiscordSignature(req, body))
-            {
-                _logger.LogWarning("Invalid Discord signature - request rejected");
-                var unauthorizedResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
-                unauthorizedResponse.Headers.Add("Content-Type", "application/json");
-                await unauthorizedResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Unauthorized" }));
-                return unauthorizedResponse;
-            }
-            
-            if (isPing)
-            {
-                _logger.LogInformation("Received PING request (endpoint verification)");
-                if (!VerifyDiscordSignature(req, body))
-                {
-                    _logger.LogWarning("PING signature verification failed, but allowing through for endpoint verification");
-                }
             }
 
             var responseData = await HandleDiscordInteractionAsync(data);
@@ -140,8 +124,8 @@ public class DiscordBot
 
             if (string.IsNullOrEmpty(publicKeyHex))
             {
-                _logger.LogWarning("Discord public key not configured - signature verification skipped");
-                return true;
+                _logger.LogError("Discord public key not configured - signature verification cannot proceed");
+                return false;
             }
 
             var signature = HexStringToBytes(signatureHex);

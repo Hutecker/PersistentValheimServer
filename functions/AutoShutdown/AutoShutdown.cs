@@ -1,6 +1,3 @@
-using System;
-using System.Linq;
-using Azure.Core;
 using Azure.Identity;
 using Azure.ResourceManager;
 using Azure.ResourceManager.ContainerInstance;
