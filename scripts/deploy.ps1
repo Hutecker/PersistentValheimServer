@@ -414,7 +414,6 @@ try {
     }
     Write-Host "✅ All required files present" -ForegroundColor Green
     
-    Write-Host "`nDeploying Function App using One Deploy (Flex Consumption)..." -ForegroundColor Yellow
     Write-Host "  Function App: $functionAppName" -ForegroundColor Gray
     Write-Host "  Resource Group: $ResourceGroupName" -ForegroundColor Gray
     Write-Host ""
@@ -422,16 +421,14 @@ try {
     Write-Host "  This properly configures the deployment blob container and triggers function indexing" -ForegroundColor Gray
     Write-Host ""
     
-    # Use func azure functionapp publish for proper One Deploy
-    # This is the ONLY supported method for Flex Consumption
-    & $funcCmd azure functionapp publish $functionAppName --dotnet-isolated --csharp
+    & $funcCmd azure functionapp publish $functionAppName
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "⚠️  Deployment may have failed. Trying with explicit publish directory..." -ForegroundColor Yellow
         
         # Try alternative: use func with explicit publish directory
         Push-Location $publishDir
-        & $funcCmd azure functionapp publish $functionAppName --dotnet-isolated --csharp
+        & $funcCmd azure functionapp publish $functionAppName
         $deployExitCode = $LASTEXITCODE
         Pop-Location
         
