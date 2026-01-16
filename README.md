@@ -31,7 +31,7 @@ This solution uses:
 
 - Azure subscription
 - Azure CLI installed and logged in
-- .NET 8.0 SDK installed
+- .NET 10.0 SDK installed
 - **Azure Functions Core Tools** (installed automatically by deploy script, or manually: `npm install -g azure-functions-core-tools@4`)
 - Node.js (required for Azure Functions Core Tools installation)
 - Discord bot token and public key (create at https://discord.com/developers/applications)
@@ -126,7 +126,7 @@ The server will automatically shut down after the configured timeout (default: 2
 
 - **Azure Container Instances (ACI)**: Runs Valheim server on-demand
 - **Azure File Share**: Persistent storage for world saves
-- **Azure Functions (Flex Consumption)**: Discord bot and auto-shutdown logic (.NET 8.0 isolated)
+- **Azure Functions (Flex Consumption)**: Discord bot and auto-shutdown logic (.NET 10.0 isolated)
 - **Azure Key Vault**: Secure storage for secrets (accessed via Key Vault references in app settings)
 - **Managed Identity**: System-assigned identity for secure resource access
 - **Application Insights**: Monitoring and logging

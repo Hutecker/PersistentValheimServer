@@ -397,13 +397,13 @@ try {
     }
     
     Write-Host "`nBuilding and publishing project..." -ForegroundColor Yellow
-    dotnet publish --configuration Release --output "bin\Release\net8.0\publish"
+    dotnet publish --configuration Release --output "bin\Release\net10.0\publish"
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to publish project"
     }
     
     Write-Host "Verifying published files..." -ForegroundColor Yellow
-    $publishDir = "bin\Release\net8.0\publish"
+    $publishDir = "bin\Release\net10.0\publish"
     $requiredFiles = @("host.json", "ValheimServerFunctions.dll")
     foreach ($file in $requiredFiles) {
         $filePath = Join-Path $publishDir $file

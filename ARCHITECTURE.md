@@ -87,7 +87,7 @@ This solution provides a cost-effective, Discord-controlled Valheim dedicated se
 - **AutoShutdown**: Timer trigger (every 5 minutes)
 
 **Configuration**:
-- Runtime: .NET 8.0 (dotnet-isolated)
+- Runtime: .NET 10.0 (dotnet-isolated)
 - Plan: Flex Consumption (FC1) - enhanced scalability and features
 - Identity: System-assigned managed identity
 - Deployment: Blob container deployment (One Deploy method)
