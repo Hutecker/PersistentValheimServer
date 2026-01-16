@@ -21,9 +21,9 @@ This solution provides a cost-effective, Discord-controlled Valheim dedicated se
 │   └───────────────────────────┘ │
 │   ┌───────────────────────────┐ │
 │   │  AutoShutdown Function    │ │
-│   │  - Timer trigger (5 min)  │ │
+│   │  - Timer trigger          │ │
 │   │  - Check shutdown time    │ │
-│   │  - Stop container if due   │ │
+│   │  - Stop container if due  │ │
 │   └───────────────────────────┘ │
 └──────┬──────────────────────────┘
        │
@@ -84,7 +84,7 @@ This solution provides a cost-effective, Discord-controlled Valheim dedicated se
 
 **Functions**:
 - **DiscordBot**: HTTP trigger for Discord interactions
-- **AutoShutdown**: Timer trigger (every 5 minutes)
+- **AutoShutdown**: Timer trigger
 
 **Configuration**:
 - Runtime: .NET 10.0 (dotnet-isolated)
@@ -145,7 +145,7 @@ This solution provides a cost-effective, Discord-controlled Valheim dedicated se
 
 ### Auto-Shutdown
 
-1. AutoShutdown function runs every 5 minutes
+1. AutoShutdown function runs on configurable timer
 2. Checks if container is running
 3. Calculates time since start
 4. If timeout exceeded, deletes container group
