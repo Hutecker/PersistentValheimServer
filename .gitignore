@@ -39,3 +39,4 @@ logs/
 .python_packages/
 bin/
 obj/
+local.settings.json
