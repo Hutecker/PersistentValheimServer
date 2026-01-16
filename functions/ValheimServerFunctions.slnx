@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ValheimServerFunctions.csproj" />
+  <Project Path="ValheimServerFunctions.Tests/ValheimServerFunctions.Tests.csproj" />
+</Solution>
