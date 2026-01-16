@@ -3,6 +3,12 @@
 # Or run: powershell.exe -ExecutionPolicy Bypass -File .\scripts\deploy.ps1 ...
 
 param(
+    [Parameter(Mandatory=$false)]
+    [switch]$CodeOnly,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$FunctionAppName = "",
+    
     [Parameter(Mandatory=$true)]
     [string]$ResourceGroupName,
     
@@ -39,6 +45,22 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Write-Host "Valheim Server Azure Deployment" -ForegroundColor Cyan
 Write-Host "================================" -ForegroundColor Cyan
 
+if ($CodeOnly) {
+    Write-Host "Mode: Code-only deployment (skipping infrastructure)" -ForegroundColor Yellow
+    Write-Host ""
+    
+    if ([string]::IsNullOrWhiteSpace($FunctionAppName)) {
+        Write-Host "[ERROR] -FunctionAppName is required when using -CodeOnly" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Usage:" -ForegroundColor Yellow
+        Write-Host "  .\scripts\deploy.ps1 -CodeOnly -FunctionAppName 'valheim-func' -ResourceGroupName 'valheim-server-rg' ..." -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "Or query the Function App name from Azure:" -ForegroundColor Yellow
+        Write-Host "  az functionapp list --resource-group 'valheim-server-rg' --query '[0].name' -o tsv" -ForegroundColor Gray
+        exit 1
+    }
+}
+
 try {
     $azVersion = az version --output json | ConvertFrom-Json
     Write-Host "Azure CLI version: $($azVersion.'azure-cli')" -ForegroundColor Green
@@ -64,27 +86,28 @@ if (-not $SubscriptionId) {
     $SubscriptionId = $account.id
 }
 
-Write-Host "`nChecking resource group..." -ForegroundColor Yellow
-$rgExists = az group exists --name $ResourceGroupName --output tsv
-if ($rgExists -eq "false") {
-    Write-Host "Creating resource group: $ResourceGroupName" -ForegroundColor Yellow
-    az group create --name $ResourceGroupName --location $Location --output none
-    Write-Host "Resource group created" -ForegroundColor Green
-} else {
-    Write-Host "Resource group already exists" -ForegroundColor Green
-    
-    
-    # Budget time periods can't be updated, so delete existing budget first
-    Write-Host "Checking for existing budget..." -ForegroundColor Gray
-    $existingBudget = az consumption budget show --budget-name "valheim-monthly-budget" --resource-group $ResourceGroupName --output json 2>$null
-    if ($existingBudget) {
-        Write-Host "Deleting existing budget (time period can't be updated)..." -ForegroundColor Yellow
-        az consumption budget delete --budget-name "valheim-monthly-budget" --resource-group $ResourceGroupName --output none 2>$null
-        Write-Host "[OK] Budget deleted" -ForegroundColor Green
+if (-not $CodeOnly) {
+    Write-Host "`nChecking resource group..." -ForegroundColor Yellow
+    $rgExists = az group exists --name $ResourceGroupName --output tsv
+    if ($rgExists -eq "false") {
+        Write-Host "Creating resource group: $ResourceGroupName" -ForegroundColor Yellow
+        az group create --name $ResourceGroupName --location $Location --output none
+        Write-Host "Resource group created" -ForegroundColor Green
+    } else {
+        Write-Host "Resource group already exists" -ForegroundColor Green
+        
+        
+        # Budget time periods can't be updated, so delete existing budget first
+        Write-Host "Checking for existing budget..." -ForegroundColor Gray
+        $existingBudget = az consumption budget show --budget-name "valheim-monthly-budget" --resource-group $ResourceGroupName --output json 2>$null
+        if ($existingBudget) {
+            Write-Host "Deleting existing budget (time period can't be updated)..." -ForegroundColor Yellow
+            az consumption budget delete --budget-name "valheim-monthly-budget" --resource-group $ResourceGroupName --output none 2>$null
+            Write-Host "[OK] Budget deleted" -ForegroundColor Green
+        }
     }
-}
 
-Write-Host "`nDeploying infrastructure..." -ForegroundColor Yellow
+    Write-Host "`nDeploying infrastructure..." -ForegroundColor Yellow
 $deploymentName = "valheim-deployment-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 
 Write-Host "Using Incremental deployment mode (preserves existing resources not in template)" -ForegroundColor Gray
@@ -209,34 +232,68 @@ try {
         }
         
         Write-Host "Infrastructure deployed successfully" -ForegroundColor Green
-} catch {
-    Write-Host "`n[ERROR] Error deploying infrastructure: $_" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "For more details, check:" -ForegroundColor Yellow
-    Write-Host "  - Azure Portal deployment history" -ForegroundColor Gray
-    Write-Host "  - Application Insights logs" -ForegroundColor Gray
-    exit 1
-}
+    } catch {
+        Write-Host "`n[ERROR] Error deploying infrastructure: $_" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "For more details, check:" -ForegroundColor Yellow
+        Write-Host "  - Azure Portal deployment history" -ForegroundColor Gray
+        Write-Host "  - Application Insights logs" -ForegroundColor Gray
+        exit 1
+    }
 
-Write-Host "`nRetrieving deployment outputs..." -ForegroundColor Yellow
-$outputs = az deployment group show `
-    --resource-group $ResourceGroupName `
-    --name $deploymentName `
-    --query "properties.outputs" `
-    --output json | ConvertFrom-Json
+    Write-Host "`nRetrieving deployment outputs..." -ForegroundColor Yellow
+    $outputs = az deployment group show `
+        --resource-group $ResourceGroupName `
+        --name $deploymentName `
+        --query "properties.outputs" `
+        --output json | ConvertFrom-Json
 
-$functionAppName = $outputs.functionAppName.value
-$functionAppUrl = $outputs.functionAppUrl.value
+    $functionAppName = $outputs.functionAppName.value
+    $functionAppUrl = $outputs.functionAppUrl.value
 
-Write-Host "Deployment outputs:" -ForegroundColor Green
-Write-Host "  Function App: $functionAppName"
-Write-Host "  Function App URL: $functionAppUrl"
-Write-Host "  Storage Account: $($outputs.storageAccountName.value)"
-Write-Host "  Key Vault: $($outputs.keyVaultName.value)"
-if ($outputs.budgetConfigured.value) {
-    Write-Host "  Budget: $($outputs.budgetLimit.value) (alerts configured)" -ForegroundColor Green
-} elseif (-not [string]::IsNullOrWhiteSpace($BudgetAlertEmail)) {
-    Write-Host "  Budget: Not configured (email may be invalid)" -ForegroundColor Yellow
+    Write-Host "Deployment outputs:" -ForegroundColor Green
+    Write-Host "  Function App: $functionAppName"
+    Write-Host "  Function App URL: $functionAppUrl"
+    Write-Host "  Storage Account: $($outputs.storageAccountName.value)"
+    Write-Host "  Key Vault: $($outputs.keyVaultName.value)"
+    if ($outputs.budgetConfigured.value) {
+        Write-Host "  Budget: $($outputs.budgetLimit.value) (alerts configured)" -ForegroundColor Green
+    } elseif (-not [string]::IsNullOrWhiteSpace($BudgetAlertEmail)) {
+        Write-Host "  Budget: Not configured (email may be invalid)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "`nSkipping infrastructure deployment (code-only mode)" -ForegroundColor Yellow
+    Write-Host "Verifying Function App exists..." -ForegroundColor Yellow
+    
+    try {
+        $functionAppInfo = az functionapp show `
+            --name $FunctionAppName `
+            --resource-group $ResourceGroupName `
+            --query "{name:name, defaultHostName:defaultHostName}" `
+            --output json 2>$null | ConvertFrom-Json
+        
+        if (-not $functionAppInfo) {
+            Write-Host "[ERROR] Function App '$FunctionAppName' not found in resource group '$ResourceGroupName'" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "Available Function Apps:" -ForegroundColor Yellow
+            az functionapp list --resource-group $ResourceGroupName --query '[].name' -o table
+            exit 1
+        }
+        
+        $functionAppName = $FunctionAppName
+        $functionAppUrl = "https://$($functionAppInfo.defaultHostName)"
+        Write-Host "[OK] Function App found: $functionAppName" -ForegroundColor Green
+        Write-Host "  URL: $functionAppUrl" -ForegroundColor Gray
+    } catch {
+        Write-Host "[ERROR] Failed to verify Function App: $_" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Please verify:" -ForegroundColor Yellow
+        Write-Host "  1. Function App name is correct: $FunctionAppName" -ForegroundColor Gray
+        Write-Host "  2. Resource group is correct: $ResourceGroupName" -ForegroundColor Gray
+        Write-Host "  3. You're logged in: az login" -ForegroundColor Gray
+        Write-Host "  4. You have access to the resource group" -ForegroundColor Gray
+        exit 1
+    }
 }
 
 Write-Host "`nDeploying Function App code..." -ForegroundColor Yellow
@@ -448,15 +505,16 @@ try {
     Write-Host "`nNote: Infrastructure is deployed. You can deploy Function App code manually later." -ForegroundColor Yellow
 }
 
-Write-Host "`nDiscord Bot Setup:" -ForegroundColor Cyan
-Write-Host "1. Go to https://discord.com/developers/applications"
-Write-Host "2. Select your application"
-Write-Host "3. Go to 'General Information' and copy your Application ID"
-Write-Host "4. Register slash commands using:"
-Write-Host "   POST https://discord.com/api/v10/applications/{APPLICATION_ID}/commands"
-Write-Host ""
-Write-Host "Command JSON:"
-$commandsJson = @'
+if (-not $CodeOnly) {
+    Write-Host "`nDiscord Bot Setup:" -ForegroundColor Cyan
+    Write-Host "1. Go to https://discord.com/developers/applications"
+    Write-Host "2. Select your application"
+    Write-Host "3. Go to 'General Information' and copy your Application ID"
+    Write-Host "4. Register slash commands using:"
+    Write-Host "   POST https://discord.com/api/v10/applications/{APPLICATION_ID}/commands"
+    Write-Host ""
+    Write-Host "Command JSON:"
+    $commandsJson = @'
 [
   {
     "name": "valheim",
@@ -481,12 +539,16 @@ $commandsJson = @'
   }
 ]
 '@
-Write-Host $commandsJson -ForegroundColor Yellow
-Write-Host ""
-Write-Host "5. Set the interaction endpoint URL to: $functionAppUrl/api/DiscordBot" -ForegroundColor Yellow
+    Write-Host $commandsJson -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "5. Set the interaction endpoint URL to: $functionAppUrl/api/DiscordBot" -ForegroundColor Yellow
 
-Write-Host "`nDeployment completed!" -ForegroundColor Green
-Write-Host "`nNext steps:" -ForegroundColor Cyan
-Write-Host "1. Complete Discord bot setup (see above)"
-Write-Host "2. Test the server: /valheim start"
-Write-Host "3. Monitor costs in Azure Portal"
+    Write-Host "`nDeployment completed!" -ForegroundColor Green
+    Write-Host "`nNext steps:" -ForegroundColor Cyan
+    Write-Host "1. Complete Discord bot setup (see above)"
+    Write-Host "2. Test the server: /valheim start"
+    Write-Host "3. Monitor costs in Azure Portal"
+} else {
+    Write-Host "`nCode deployment completed!" -ForegroundColor Green
+    Write-Host "Function App URL: $functionAppUrl/api/DiscordBot" -ForegroundColor Cyan
+}

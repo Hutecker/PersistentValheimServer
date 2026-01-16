@@ -97,6 +97,31 @@ The script will:
 - Set up managed identity and role assignments
 - Build, test, and deploy the Function App code
 
+#### Code-Only Deployment
+
+For faster iterations during development, you can deploy only the Function App code without redeploying infrastructure:
+
+```powershell
+.\scripts\deploy.ps1 `
+  -CodeOnly `
+  -FunctionAppName "valheim-func" `
+  -ResourceGroupName "valheim-server-rg" `
+  -Location "eastus" `
+  -DiscordBotToken "YOUR_DISCORD_BOT_TOKEN_HERE" `
+  -DiscordPublicKey "YOUR_64_CHARACTER_HEX_PUBLIC_KEY_HERE" `
+  -ServerPassword "YOUR_SERVER_PASSWORD_HERE" `
+  -ServerName "My Valheim Server" `
+  -AutoShutdownMinutes 120 `
+  -MonthlyBudgetLimit 30.0 `
+  -BudgetAlertEmail "your-email@example.com"
+```
+
+**Note:** When using `-CodeOnly`:
+- The `-FunctionAppName` parameter is required
+- Infrastructure deployment is skipped (faster for code changes)
+- All other parameters are still required (they're validated but not used)
+- To find your Function App name: `az functionapp list --resource-group "valheim-server-rg" --query '[0].name' -o tsv`
+
 ### 3. Configure Discord Interactions Endpoint
 
 After deployment, set the interactions endpoint in Discord:
