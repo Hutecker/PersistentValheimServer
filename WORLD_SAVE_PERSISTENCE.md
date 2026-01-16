@@ -31,14 +31,14 @@ Azure File Share (valheim-worlds)
 
 ## Persistence Guarantees
 
-### ✅ What Persists
+### [OK] What Persists
 1. **World Save Files**: Stored in Azure File Share (survives container deletion)
 2. **Automatic Backups**: Container creates daily backups (7-day retention)
 3. **Container Restarts**: Data persists across container restarts
 4. **Container Deletions**: Data persists when container is stopped/deleted
 5. **Infrastructure Updates**: Data persists during Bicep redeployments
 
-### ⚠️ What Doesn't Persist
+### [WARNING] What Doesn't Persist
 1. **In-Memory State**: Any unsaved game state is lost when container stops
 2. **Container Logs**: Logs are ephemeral (use Application Insights for persistence)
 3. **Temporary Files**: Any files outside `/config` are lost
@@ -68,20 +68,20 @@ The migration script (`scripts/migrate-save.ps1`) includes:
 ## Migration Safety
 
 ### Before Migration
-1. ✅ Check if world already exists
-2. ✅ Create backup of existing world (if present)
-3. ✅ Validate world name matches `WORLD_NAME` environment variable
-4. ✅ Prompt user for confirmation before overwriting
+1. [OK] Check if world already exists
+2. [OK] Create backup of existing world (if present)
+3. [OK] Validate world name matches `WORLD_NAME` environment variable
+4. [OK] Prompt user for confirmation before overwriting
 
 ### During Migration
-1. ✅ Upload files with correct naming (`{WORLD_NAME}.db` and `{WORLD_NAME}.fwl`)
-2. ✅ Preserve existing backups
-3. ✅ Create timestamped backup of existing world
+1. [OK] Upload files with correct naming (`{WORLD_NAME}.db` and `{WORLD_NAME}.fwl`)
+2. [OK] Preserve existing backups
+3. [OK] Create timestamped backup of existing world
 
 ### After Migration
-1. ✅ Verify files uploaded successfully
-2. ✅ Provide summary of migration
-3. ✅ Document backup location
+1. [OK] Verify files uploaded successfully
+2. [OK] Provide summary of migration
+3. [OK] Document backup location
 
 ## Best Practices
 

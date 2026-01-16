@@ -18,7 +18,6 @@ Write-Host "One-time role assignment cleanup for: $ResourceGroupName" -Foregroun
 Write-Host "This script deletes old role assignments so the updated Bicep template can create new ones." -ForegroundColor Gray
 Write-Host ""
 
-# Get Function App managed identity principal ID
 Write-Host "Getting Function App managed identity..." -ForegroundColor Yellow
 $functionAppPrincipalId = az functionapp show --name $FunctionAppName --resource-group $ResourceGroupName --query "identity.principalId" --output tsv 2>$null
 
@@ -31,11 +30,9 @@ if (-not $functionAppPrincipalId) {
 Write-Host "Found Function App managed identity: $functionAppPrincipalId" -ForegroundColor Green
 Write-Host ""
 
-# List ALL role assignments for this principal (at all scopes)
 Write-Host "Finding all role assignments..." -ForegroundColor Yellow
 $allRoleAssignments = az role assignment list --assignee $functionAppPrincipalId --all --output json 2>$null | ConvertFrom-Json
 
-# Filter to only those in our resource group
 $roleAssignments = $allRoleAssignments | Where-Object { $_.scope -like "*resourceGroups/$ResourceGroupName*" }
 
 if (-not $roleAssignments -or $roleAssignments.Count -eq 0) {
@@ -51,7 +48,6 @@ foreach ($assignment in $roleAssignments) {
 }
 
 Write-Host ""
-# Auto-confirm in non-interactive mode (for script automation)
 $autoConfirm = $env:CI -eq "true" -or $env:TF_BUILD -eq "true" -or $args -contains "-Force"
 if (-not $autoConfirm) {
     $confirm = Read-Host "Delete these role assignments? (y/N)"
@@ -75,7 +71,7 @@ foreach ($assignment in $roleAssignments) {
 }
 
 Write-Host ""
-Write-Host "✅ Deleted $deleted role assignment(s)" -ForegroundColor Green
+Write-Host "[OK] Deleted $deleted role assignment(s)" -ForegroundColor Green
 Write-Host ""
 Write-Host "You can now run the deployment script." -ForegroundColor Cyan
 Write-Host "The Bicep template will create new role assignments with stable GUIDs." -ForegroundColor Gray

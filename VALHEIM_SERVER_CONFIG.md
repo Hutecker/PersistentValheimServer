@@ -55,8 +55,8 @@ World saves are stored as:
 - **Storage**: ~1 GB for server + world saves (we allocate 100 GB)
 
 ### Recommended for 5-10 Players
-- **CPU**: 2-4 cores ✅ (we use 2 cores - sufficient for 5 players)
-- **RAM**: 4 GB ✅ (we use 4 GB)
+- **CPU**: 2-4 cores [OK] (we use 2 cores - sufficient for 5 players)
+- **RAM**: 4 GB [OK] (we use 4 GB)
 - **Network**: Stable connection with low latency
 
 ## Server Settings
@@ -79,7 +79,7 @@ World saves are automatically persisted to Azure File Share:
 
 ## Alignment with Official Guides
 
-### ✅ Requirements Met
+### [OK] Requirements Met
 
 1. **Port Configuration**: All required UDP ports (2456-2458) are exposed
 2. **Server Password**: Securely stored and configured

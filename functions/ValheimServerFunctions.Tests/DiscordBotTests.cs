@@ -21,7 +21,6 @@ public class DiscordBotTests : IDisposable
     {
         _loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
         
-        // Set up default environment variables for testing
         SetEnvironmentVariable("DISCORD_PUBLIC_KEY", "");
         SetEnvironmentVariable("SERVER_PASSWORD", "test-password");
         SetEnvironmentVariable("SUBSCRIPTION_ID", "test-subscription-id");
@@ -53,7 +52,6 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task HandlePing_ReturnsPong()
     {
-        // Arrange
         var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature("{\"type\":1}");
         SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
         
@@ -68,20 +66,17 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var responseBody = TestHttpResponseData.GetBodyAsString(response);
         var responseJson = JsonSerializer.Deserialize<JsonElement>(responseBody);
-        Assert.Equal(1, responseJson.GetProperty("type").GetInt32()); // PONG
+        Assert.Equal(1, responseJson.GetProperty("type").GetInt32());
     }
     
     [Fact]
     public async Task HandleApplicationCommand_UnknownCommand_ReturnsErrorMessage()
     {
-        // Arrange
         var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature(
             "{\"type\":2,\"data\":{\"name\":\"unknown\",\"options\":[]}}"
         );
@@ -98,14 +93,12 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var responseBody = TestHttpResponseData.GetBodyAsString(response);
         var responseJson = JsonSerializer.Deserialize<JsonElement>(responseBody);
-        Assert.Equal(4, responseJson.GetProperty("type").GetInt32()); // CHANNEL_MESSAGE_WITH_SOURCE
+        Assert.Equal(4, responseJson.GetProperty("type").GetInt32());
         Assert.Contains("Unknown command", responseJson.GetProperty("data").GetProperty("content").GetString()!);
     }
     
@@ -127,14 +120,12 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var responseBody = TestHttpResponseData.GetBodyAsString(response);
         var responseJson = JsonSerializer.Deserialize<JsonElement>(responseBody);
-        Assert.Equal(1, responseJson.GetProperty("type").GetInt32()); // PONG (default)
+        Assert.Equal(1, responseJson.GetProperty("type").GetInt32());
     }
     
     #endregion
@@ -144,9 +135,8 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task MissingSignatureHeaders_ReturnsUnauthorized()
     {
-        // Arrange
         var body = "{\"type\":2,\"data\":{\"name\":\"valheim\",\"options\":[{\"name\":\"status\"}]}}";
-        var headers = new Dictionary<string, string>(); // No signature headers
+        var headers = new Dictionary<string, string>();
         
         var functionContext = new TestFunctionContext(_loggerFactory);
         var request = TestHttpRequestData.Create(functionContext, body, headers);
@@ -206,17 +196,14 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
     
     [Fact]
     public async Task Ping_AllowsThroughWithoutValidSignature()
     {
-        // Arrange - PING should be allowed through even without valid signature (for endpoint verification)
         var body = "{\"type\":1}";
         var headers = new Dictionary<string, string>
         {
@@ -228,14 +215,12 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert - Should still return PONG even with invalid signature
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var responseBody = TestHttpResponseData.GetBodyAsString(response);
         var responseJson = JsonSerializer.Deserialize<JsonElement>(responseBody);
-        Assert.Equal(1, responseJson.GetProperty("type").GetInt32()); // PONG
+        Assert.Equal(1, responseJson.GetProperty("type").GetInt32());
     }
     
     #endregion
@@ -245,7 +230,6 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task Response_ContainsContentTypeHeader()
     {
-        // Arrange
         var (publicKey, signature, timestamp) = DiscordSignatureHelper.GenerateValidSignature("{\"type\":1}");
         SetEnvironmentVariable("DISCORD_PUBLIC_KEY", publicKey);
         
@@ -286,14 +270,12 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var responseBody = TestHttpResponseData.GetBodyAsString(response);
         var responseJson = JsonSerializer.Deserialize<JsonElement>(responseBody);
-        Assert.Equal(4, responseJson.GetProperty("type").GetInt32()); // CHANNEL_MESSAGE_WITH_SOURCE
+        Assert.Equal(4, responseJson.GetProperty("type").GetInt32());
         Assert.True(responseJson.GetProperty("data").TryGetProperty("content", out _));
     }
     
@@ -315,14 +297,12 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var responseBody = TestHttpResponseData.GetBodyAsString(response);
         var responseJson = JsonSerializer.Deserialize<JsonElement>(responseBody);
-        Assert.Equal(5, responseJson.GetProperty("type").GetInt32()); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+        Assert.Equal(5, responseJson.GetProperty("type").GetInt32());
     }
     
     #endregion
@@ -364,7 +344,6 @@ public class DiscordBotTests : IDisposable
         // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert - Should handle gracefully (either bad request or default PONG)
         Assert.True(response.StatusCode == HttpStatusCode.BadRequest || response.StatusCode == HttpStatusCode.OK);
     }
     
@@ -390,10 +369,8 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var responseBody = TestHttpResponseData.GetBodyAsString(response);
         var responseJson = JsonSerializer.Deserialize<JsonElement>(responseBody);
@@ -419,10 +396,8 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var responseBody = TestHttpResponseData.GetBodyAsString(response);
         var responseJson = JsonSerializer.Deserialize<JsonElement>(responseBody);
@@ -437,7 +412,6 @@ public class DiscordBotTests : IDisposable
     [Fact]
     public async Task GetRequest_HandlesGracefully()
     {
-        // Arrange - Discord sends POST, but we should handle GET for health checks
         var body = "";
         var headers = new Dictionary<string, string>();
         
@@ -445,10 +419,8 @@ public class DiscordBotTests : IDisposable
         var request = TestHttpRequestData.Create(functionContext, body, headers);
         var bot = new DiscordBot(_loggerFactory);
         
-        // Act
         var response = await bot.Run(request, functionContext);
         
-        // Assert - Should handle gracefully
         Assert.True(response.StatusCode == HttpStatusCode.BadRequest || response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.OK);
     }
     

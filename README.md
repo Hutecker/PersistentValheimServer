@@ -20,12 +20,12 @@ This solution uses:
 
 ## Features
 
-✅ Discord channel control (start/stop server)  
-✅ Automatic shutdown after inactivity  
-✅ Persistent world saves  
-✅ Save migration support  
-✅ Infrastructure as Code (Bicep)  
-✅ Cost-optimized for 5 players  
+[OK] Discord channel control (start/stop server)  
+[OK] Automatic shutdown after inactivity  
+[OK] Persistent world saves  
+[OK] Save migration support  
+[OK] Infrastructure as Code (Bicep)  
+[OK] Cost-optimized for 5 players  
 
 ## Prerequisites
 
@@ -55,20 +55,41 @@ This solution uses:
 
 ### 2. Deploy Infrastructure
 
-Run the deployment script:
+Run the deployment script with your values:
 
 ```powershell
 .\scripts\deploy.ps1 `
   -ResourceGroupName "valheim-server-rg" `
   -Location "eastus" `
-  -DiscordBotToken "YOUR_BOT_TOKEN" `
-  -DiscordPublicKey "YOUR_PUBLIC_KEY" `
-  -ServerPassword "YOUR_SERVER_PASSWORD" `
-  -ServerName "Your Server Name" `
+  -DiscordBotToken "YOUR_DISCORD_BOT_TOKEN_HERE" `
+  -DiscordPublicKey "YOUR_64_CHARACTER_HEX_PUBLIC_KEY_HERE" `
+  -ServerPassword "YOUR_SERVER_PASSWORD_HERE" `
+  -ServerName "My Valheim Server" `
   -AutoShutdownMinutes 120 `
   -MonthlyBudgetLimit 30.0 `
   -BudgetAlertEmail "your-email@example.com"
 ```
+
+**Example with placeholder values:**
+
+```powershell
+.\scripts\deploy.ps1 `
+  -ResourceGroupName "valheim-server-rg" `
+  -Location "eastus" `
+  -DiscordBotToken "MTQ2MDM2NTA0NTEzMjMwMDMwOA.GE1tcd.example_token_here" `
+  -DiscordPublicKey "9220348032faaf2e50d7a71af23f69a80492b966a6e363e7ccbb12a81880cf0c" `
+  -ServerPassword "YourSecurePassword123" `
+  -ServerName "My Valheim Server" `
+  -AutoShutdownMinutes 120 `
+  -MonthlyBudgetLimit 30.0 `
+  -BudgetAlertEmail "your-email@example.com"
+```
+
+**Note:** Replace all placeholder values with your actual:
+- Discord Bot Token (from Discord Developer Portal → Bot section)
+- Discord Public Key (64-character hex string from General Information)
+- Server Password (your Valheim server password)
+- Email address for budget alerts (optional but recommended)
 
 The script will:
 - Deploy all Azure infrastructure (Storage, Key Vault, Function App) via Bicep
@@ -81,7 +102,9 @@ The script will:
 After deployment, set the interactions endpoint in Discord:
 
 1. Go to https://discord.com/developers/applications → Your Application → **Interactions**
-2. Set **Interaction Endpoint URL** to: `https://valheim-func.azurewebsites.net/api/DiscordBot`
+2. Set **Interaction Endpoint URL** to the Function App URL shown at the end of deployment (format: `https://<function-app-name>.azurewebsites.net/api/DiscordBot`)
+   - The exact Function App name will be displayed in the deployment output
+   - Example: `https://valheim-func-abc123.azurewebsites.net/api/DiscordBot`
 3. Register slash commands using the JSON shown at the end of deployment
 
 ### 4. Migrate World Save (Optional)
@@ -178,8 +201,9 @@ If deployment fails:
    - **Manual fix**: Go to Azure Portal → Resource Group → Access control (IAM) → Delete role assignments for `valheim-func` managed identity
 
 2. **Budget Start Date Error**:
-   - Budget uses a fixed start date (2024-01-01) - Azure automatically handles monthly resets
-   - This ensures deployments work consistently regardless of when you deploy
+   - Budget uses the first day of the current month as the start date
+   - Azure automatically handles monthly resets
+   - The start date is calculated automatically during deployment
 
 3. **Ensure Azure Functions Core Tools is installed**:
    ```powershell
@@ -199,7 +223,7 @@ If deployment fails:
 6. **Manually deploy using func**:
    ```powershell
    cd functions
-   func azure functionapp publish valheim-func --dotnet-isolated --csharp
+   func azure functionapp publish valheim-func
    ```
 
 ### Alternative: VM-Based Approach

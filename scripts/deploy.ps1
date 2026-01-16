@@ -1,7 +1,3 @@
-# Deployment Script for Valheim Server on Azure
-# Infrastructure is managed via Bicep (infrastructure/main.bicep)
-# This script deploys the Bicep template and then builds/deploys Function App code
-#
 # If you get an execution policy error, run this first:
 # Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 # Or run: powershell.exe -ExecutionPolicy Bypass -File .\scripts\deploy.ps1 ...
@@ -77,20 +73,14 @@ if ($rgExists -eq "false") {
 } else {
     Write-Host "Resource group already exists" -ForegroundColor Green
     
-    # NOTE: We do NOT delete role assignments here!
-    # ARM owns role assignments - deleting them outside ARM causes conflicts.
-    # The Bicep template now uses:
-    # - Explicit dependsOn to wait for Function App identity
-    # - Fully-qualified guid() names for deterministic assignment IDs
-    # This ensures role assignments are stable across redeployments.
     
-    # Delete existing budget if it exists (budget time periods can't be updated)
+    # Budget time periods can't be updated, so delete existing budget first
     Write-Host "Checking for existing budget..." -ForegroundColor Gray
     $existingBudget = az consumption budget show --budget-name "valheim-monthly-budget" --resource-group $ResourceGroupName --output json 2>$null
     if ($existingBudget) {
         Write-Host "Deleting existing budget (time period can't be updated)..." -ForegroundColor Yellow
         az consumption budget delete --budget-name "valheim-monthly-budget" --resource-group $ResourceGroupName --output none 2>$null
-        Write-Host "✅ Budget deleted" -ForegroundColor Green
+        Write-Host "[OK] Budget deleted" -ForegroundColor Green
     }
 }
 
@@ -100,7 +90,6 @@ $deploymentName = "valheim-deployment-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 Write-Host "Using Incremental deployment mode (preserves existing resources not in template)" -ForegroundColor Gray
 
 try {
-        # Build parameters for Azure CLI - pass each parameter separately
         $azParams = @(
             'deployment', 'group', 'create',
             '--resource-group', $ResourceGroupName,
@@ -119,7 +108,6 @@ try {
         if (-not [string]::IsNullOrWhiteSpace($BudgetAlertEmail)) {
             $azParams += '--parameters'
             $azParams += "budgetAlertEmail=$BudgetAlertEmail"
-            # Budget start date must be first day of current month for monthly time grain
             $currentMonthStart = (Get-Date -Day 1).ToString("yyyy-MM-dd")
             Write-Host "  Budget start date: $currentMonthStart" -ForegroundColor Gray
             $azParams += '--parameters'
@@ -129,15 +117,13 @@ try {
         $azParams += '--output'
         $azParams += 'json'
         
-        # Execute Azure CLI command
         $deployOutput = & az $azParams 2>&1
         $deployExitCode = $LASTEXITCODE
 
         $deployOutputString = $deployOutput | Out-String
         
-        # Check for role assignment errors - these should be rare with the fixed Bicep template
         if ($deployOutputString -match "RoleAssignmentUpdateNotPermitted") {
-            Write-Host "`n❌ Role assignment update error detected" -ForegroundColor Red
+            Write-Host "`n[ERROR] Role assignment update error detected" -ForegroundColor Red
             Write-Host "This is unexpected with the current Bicep template." -ForegroundColor Yellow
             Write-Host ""
             Write-Host "If this is the first deployment after updating the template:" -ForegroundColor Yellow
@@ -152,11 +138,10 @@ try {
         }
 
         if ($deployExitCode -ne 0) {
-            Write-Host "`n❌ Infrastructure deployment failed!" -ForegroundColor Red
+            Write-Host "`n[ERROR] Infrastructure deployment failed!" -ForegroundColor Red
             Write-Host "Exit code: $deployExitCode" -ForegroundColor Yellow
             Write-Host ""
             
-            # Try to parse JSON error output
             try {
                 $errorJson = $deployOutput | ConvertFrom-Json -ErrorAction SilentlyContinue
                 if ($errorJson) {
@@ -172,22 +157,18 @@ try {
                             }
                         }
                     } else {
-                        # If it's not a standard error format, show the raw JSON
                         Write-Host "  Raw error output:" -ForegroundColor Gray
                         $deployOutput | ConvertTo-Json -Depth 10 | Write-Host -ForegroundColor Gray
                     }
                 } else {
-                    # Not JSON, show raw output
                     Write-Host "Error Output:" -ForegroundColor Yellow
                     $deployOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
                 }
             } catch {
-                # If JSON parsing fails, show raw output
                 Write-Host "Error Output:" -ForegroundColor Yellow
-                $deployOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+                $deployOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor Red                 }
             }
             
-            # Try to get deployment operation details
             Write-Host "`nAttempting to retrieve deployment operation details..." -ForegroundColor Yellow
             try {
                 $operations = az deployment group operation list `
@@ -229,7 +210,7 @@ try {
         
         Write-Host "Infrastructure deployed successfully" -ForegroundColor Green
 } catch {
-    Write-Host "`n❌ Error deploying infrastructure: $_" -ForegroundColor Red
+    Write-Host "`n[ERROR] Error deploying infrastructure: $_" -ForegroundColor Red
     Write-Host ""
     Write-Host "For more details, check:" -ForegroundColor Yellow
     Write-Host "  - Azure Portal deployment history" -ForegroundColor Gray
@@ -262,7 +243,6 @@ Write-Host "`nDeploying Function App code..." -ForegroundColor Yellow
 Push-Location functions
 
 try {
-    # Check for .NET SDK
     $dotnetVersion = dotnet --version
     if (-not $dotnetVersion) {
         throw ".NET SDK not found. Please install from https://dotnet.microsoft.com/download"
@@ -288,31 +268,27 @@ try {
             $testExitCode = $LASTEXITCODE
             
             if ($testExitCode -eq 0) {
-                Write-Host "✅ All tests passed!" -ForegroundColor Green
+                Write-Host "[OK] All tests passed!" -ForegroundColor Green
             } else {
-                Write-Host "⚠️  Some tests failed. Exit code: $testExitCode" -ForegroundColor Yellow
+                Write-Host "[WARNING]  Some tests failed. Exit code: $testExitCode" -ForegroundColor Yellow
                 Write-Host "   Test output:" -ForegroundColor Gray
                 $testOutput | Where-Object { $_ -notmatch "warning NU1603" } | Select-Object -Last 10 | ForEach-Object { Write-Host "   $_" -ForegroundColor Gray }
                 Write-Host "   Continuing with deployment. Fix test issues before next deployment." -ForegroundColor Gray
             }
         } catch {
-            Write-Host "⚠️  Could not run tests: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "[WARNING]  Could not run tests: $($_.Exception.Message)" -ForegroundColor Yellow
             Write-Host "   Continuing with deployment..." -ForegroundColor Gray
         }
     }
     
-    # Check for Azure Functions Core Tools (required for Flex Consumption One Deploy)
     Write-Host "Checking for Azure Functions Core Tools..." -ForegroundColor Yellow
     
-    # Function to find func command
     function Find-FuncCommand {
-        # Try direct command first
         $funcCmd = Get-Command func -ErrorAction SilentlyContinue
         if ($funcCmd) {
             return "func"
         }
         
-        # Check common npm global install locations (only if npm is available)
         try {
             $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
             if ($npmCmd) {
@@ -325,16 +301,13 @@ try {
                 }
             }
         } catch {
-            # npm not available, continue checking other locations
         }
         
-        # Check AppData\npm (Windows default)
         $appDataNpm = Join-Path $env:APPDATA "npm\func.cmd"
         if (Test-Path $appDataNpm) {
             return $appDataNpm
         }
         
-        # Check Program Files npm
         $programFilesNpm = "${env:ProgramFiles}\nodejs\func.cmd"
         if (Test-Path $programFilesNpm) {
             return $programFilesNpm
@@ -346,9 +319,8 @@ try {
     $funcCmd = Find-FuncCommand
     
     if (-not $funcCmd) {
-        Write-Host "⚠️  Azure Functions Core Tools not found." -ForegroundColor Yellow
+        Write-Host "[WARNING]  Azure Functions Core Tools not found." -ForegroundColor Yellow
         
-        # Check for npm/node before trying to install
         try {
             $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
             $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
@@ -356,19 +328,17 @@ try {
                 Write-Host "   Attempting to install via npm..." -ForegroundColor Gray
                 $installOutput = npm install -g azure-functions-core-tools@4 --unsafe-perm true 2>&1
                 if ($LASTEXITCODE -eq 0) {
-                    Write-Host "✅ Azure Functions Core Tools installed" -ForegroundColor Green
+                    Write-Host "[OK] Azure Functions Core Tools installed" -ForegroundColor Green
                     
-                    # Refresh PATH and try to find func again
                     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
                     $funcCmd = Find-FuncCommand
                 }
             }
         } catch {
-            # npm/node not available, skip installation
         }
         
         if (-not $funcCmd) {
-            Write-Host "❌ Azure Functions Core Tools are REQUIRED for Flex Consumption deployments" -ForegroundColor Red
+            Write-Host "[ERROR] Azure Functions Core Tools are REQUIRED for Flex Consumption deployments" -ForegroundColor Red
             Write-Host ""
             Write-Host "Flex Consumption requires 'func azure functionapp publish' for proper OneDeploy." -ForegroundColor Yellow
             Write-Host "ZIP fallback methods do NOT work with Flex Consumption." -ForegroundColor Yellow
@@ -382,17 +352,16 @@ try {
         }
     }
     
-    # Verify func works
     try {
         $funcVersion = & $funcCmd --version 2>$null
         if ($funcVersion) {
-            Write-Host "✅ Azure Functions Core Tools version: $funcVersion" -ForegroundColor Green
+            Write-Host "[OK] Azure Functions Core Tools version: $funcVersion" -ForegroundColor Green
         } else {
-            Write-Host "❌ Could not verify func version" -ForegroundColor Red
+            Write-Host "[ERROR] Could not verify func version" -ForegroundColor Red
             throw "Azure Functions Core Tools installation appears invalid"
         }
     } catch {
-        Write-Host "❌ Error running func command: $_" -ForegroundColor Red
+        Write-Host "[ERROR] Error running func command: $_" -ForegroundColor Red
         throw "Azure Functions Core Tools required for Flex Consumption deployment"
     }
     
@@ -408,32 +377,27 @@ try {
     foreach ($file in $requiredFiles) {
         $filePath = Join-Path $publishDir $file
         if (-not (Test-Path $filePath)) {
-            Write-Host "❌ Required file missing: $file" -ForegroundColor Red
+            Write-Host "[ERROR] Required file missing: $file" -ForegroundColor Red
             throw "Required file missing from publish output: $file"
         }
     }
-    Write-Host "✅ All required files present" -ForegroundColor Green
+    Write-Host "[OK] All required files present" -ForegroundColor Green
     
     Write-Host "  Function App: $functionAppName" -ForegroundColor Gray
     Write-Host "  Resource Group: $ResourceGroupName" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "  Using 'func azure functionapp publish' for Flex Consumption OneDeploy" -ForegroundColor Gray
-    Write-Host "  This properly configures the deployment blob container and triggers function indexing" -ForegroundColor Gray
-    Write-Host ""
-    
     & $funcCmd azure functionapp publish $functionAppName
     
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "⚠️  Deployment may have failed. Trying with explicit publish directory..." -ForegroundColor Yellow
+        Write-Host "[WARNING]  Deployment may have failed. Trying with explicit publish directory..." -ForegroundColor Yellow
         
-        # Try alternative: use func with explicit publish directory
         Push-Location $publishDir
         & $funcCmd azure functionapp publish $functionAppName
         $deployExitCode = $LASTEXITCODE
         Pop-Location
         
         if ($deployExitCode -ne 0) {
-            Write-Host "❌ Function App deployment failed. Error code: $deployExitCode" -ForegroundColor Red
+            Write-Host "[ERROR] Function App deployment failed. Error code: $deployExitCode" -ForegroundColor Red
             Write-Host "`nTroubleshooting tips:" -ForegroundColor Yellow
             Write-Host "  1. Ensure you're logged in: az login" -ForegroundColor Gray
             Write-Host "  2. Check Function App exists: az functionapp show --name $functionAppName --resource-group $ResourceGroupName" -ForegroundColor Gray
@@ -444,11 +408,10 @@ try {
         }
     }
     
-    Write-Host "`n✅ Deployment completed successfully!" -ForegroundColor Green
+    Write-Host "`n[OK] Deployment completed successfully!" -ForegroundColor Green
     Write-Host "`nVerifying functions..." -ForegroundColor Cyan
     Start-Sleep -Seconds 10
     
-    # Wait and retry checking for functions (they may take time to appear)
     $maxRetries = 6
     $retryCount = 0
     $functions = $null
@@ -457,9 +420,9 @@ try {
         $functions = az functionapp function list --name $functionAppName --resource-group $ResourceGroupName --output json 2>$null | ConvertFrom-Json
         
         if ($functions -and $functions.Count -gt 0) {
-            Write-Host "✅ Function App deployed successfully! Found $($functions.Count) function(s):" -ForegroundColor Green
+            Write-Host "[OK] Function App deployed successfully! Found $($functions.Count) function(s):" -ForegroundColor Green
             foreach ($func in $functions) {
-                Write-Host "  ✅ $($func.name)" -ForegroundColor Green
+                Write-Host "  [OK] $($func.name)" -ForegroundColor Green
             }
             break
         }
@@ -472,7 +435,7 @@ try {
     }
     
     if (-not $functions -or $functions.Count -eq 0) {
-        Write-Host "⚠️  Functions not yet visible in Azure CLI" -ForegroundColor Yellow
+        Write-Host "[WARNING]  Functions not yet visible in Azure CLI" -ForegroundColor Yellow
         Write-Host "   This is normal - functions may take 1-2 minutes to appear" -ForegroundColor Gray
         Write-Host "   Check Azure Portal: https://portal.azure.com/#@/resource/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$functionAppName" -ForegroundColor Gray
         Write-Host "   Or run: az functionapp function list --name $functionAppName --resource-group $ResourceGroupName" -ForegroundColor Gray

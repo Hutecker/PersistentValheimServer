@@ -155,7 +155,6 @@ public class DiscordBot
 
             var messageBytes = Encoding.UTF8.GetBytes(timestamp + body);
             
-            // Verify using ed25519
             try
             {
                 var algorithm = SignatureAlgorithm.Ed25519;
@@ -252,7 +251,6 @@ public class DiscordBot
     {
         try
         {
-            // Extract interaction token and application ID for follow-up messages
             if (!interactionData.TryGetProperty("token", out var tokenElement) ||
                 !interactionData.TryGetProperty("application_id", out var appIdElement))
             {
@@ -261,7 +259,7 @@ public class DiscordBot
                     type = 4,
                     data = new
                     {
-                        content = "❌ Error: Missing interaction data",
+                        content = "[ERROR] Missing interaction data",
                         flags = 64
                     }
                 };
@@ -270,8 +268,6 @@ public class DiscordBot
             var interactionToken = tokenElement.GetString();
             var applicationId = appIdElement.GetString();
 
-            // Return deferred response so we can send follow-up when server is ready
-            // Start server asynchronously
             _ = Task.Run(async () =>
             {
                 try
@@ -281,13 +277,13 @@ public class DiscordBot
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error in background server start task");
-                    await SendFollowUpMessage(applicationId, interactionToken, $"❌ Error: {ex.Message}");
+                    await SendFollowUpMessage(applicationId, interactionToken, $"[ERROR] {ex.Message}");
                 }
             });
 
             return new
             {
-                type = 5 // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE - allows follow-up
+                type = 5
             };
         }
         catch (Exception ex)
@@ -298,7 +294,7 @@ public class DiscordBot
                 type = 4,
                 data = new
                 {
-                    content = $"❌ Error starting server: {ex.Message}",
+                    content = $"[ERROR] Error starting server: {ex.Message}",
                     flags = 64
                 }
             };
@@ -353,19 +349,19 @@ public class DiscordBot
                         return new
                         {
                             type = 4,
-                            data = new { content = $"🟢 Server is **RUNNING**\n⏰ Auto-shutdown in {mins} minutes" }
+                            data = new { content = $"[RUNNING] Server is **RUNNING**\nAuto-shutdown in {mins} minutes" }
                         };
                     }
                     return new
                     {
                         type = 4,
-                        data = new { content = "🟢 Server is **RUNNING**\n⚠️ Auto-shutdown time has passed" }
+                        data = new { content = "[RUNNING] Server is **RUNNING**\n[WARNING] Auto-shutdown time has passed" }
                     };
                 }
                 return new
                 {
                     type = 4,
-                    data = new { content = "🟢 Server is **RUNNING**" }
+                    data = new { content = "[RUNNING] Server is **RUNNING**" }
                 };
             }
 
@@ -374,14 +370,14 @@ public class DiscordBot
                 return new
                 {
                     type = 4,
-                    data = new { content = "🔴 Server is **STOPPED**" }
+                    data = new { content = "[STOPPED] Server is **STOPPED**" }
                 };
             }
 
             return new
             {
                 type = 4,
-                data = new { content = $"⚪ Server status: **{status.ToUpper()}**" }
+                data = new { content = $"[UNKNOWN] Server status: **{status.ToUpper()}**" }
             };
         }
         catch (Exception ex)
@@ -410,11 +406,9 @@ public class DiscordBot
             var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
             var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
             
-            // Get the container group resource and check state
             var containerGroupResource = containerGroup.Value;
             var containerGroupData = containerGroupResource.Get().Value;
             
-            // Check state from container instance view
             if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
             {
                 var container = containerGroupData.Data.Containers[0];
@@ -445,14 +439,12 @@ public class DiscordBot
             var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
             var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
 
-            // Check if container group exists and is running
             try
             {
                 var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
                 var containerGroupResource = containerGroup.Value;
                 var existingContainerGroupData = containerGroupResource.Get().Value;
                 
-                // Check state from container instance view
                 if (existingContainerGroupData.Data.Containers != null && existingContainerGroupData.Data.Containers.Count > 0)
                 {
                     var existingContainer = existingContainerGroupData.Data.Containers[0];
@@ -461,7 +453,6 @@ public class DiscordBot
                     if (state.Equals("Running", StringComparison.OrdinalIgnoreCase))
                         return (true, "Server is already running!");
 
-                    // If it exists but is stopped, delete it first
                     if (state.Equals("Stopped", StringComparison.OrdinalIgnoreCase) || state.Equals("Terminated", StringComparison.OrdinalIgnoreCase))
                     {
                         _logger.LogInformation("Deleting stopped container group before recreating...");
@@ -474,7 +465,6 @@ public class DiscordBot
                 _logger.LogInformation($"Container group doesn't exist yet: {ex.Message}");
             }
 
-            // Get secrets from environment variables (app settings)
             var serverPassword = Environment.GetEnvironmentVariable("SERVER_PASSWORD");
             if (string.IsNullOrEmpty(serverPassword))
             {
@@ -488,14 +478,11 @@ public class DiscordBot
             if (string.IsNullOrEmpty(storageAccountName) || string.IsNullOrEmpty(fileShareName))
                 return (false, "Storage account configuration missing");
 
-            // Get storage account key using managed identity
-            // Note: ACI doesn't support managed identity for Azure Files mounts yet,
-            // so we must retrieve the key, but we do so using managed identity
+            // ACI doesn't support managed identity for Azure Files mounts, so retrieve key using managed identity
             var storageAccount = resourceGroup.GetStorageAccount(storageAccountName).Value;
             var keys = storageAccount.GetKeys();
             var storageKey = keys.First().Value;
 
-            // Create container group using the correct API
             var azureLocation = new AzureLocation(location);
             var container = new ContainerInstanceContainer("valheim-server", "lloesche/valheim-server:latest", 
                 new ContainerResourceRequirements(new ContainerResourceRequestsContent(2.0, 4.0)))
@@ -553,7 +540,6 @@ public class DiscordBot
             _logger.LogInformation("Creating container group...");
             resourceGroup.GetContainerGroups().CreateOrUpdate(WaitUntil.Started, containerGroupName, containerGroupData);
 
-            // Update state
             var stateKey = containerGroupName;
             var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable("AUTO_SHUTDOWN_MINUTES") ?? "120");
             _serverStates[stateKey] = new ServerState
@@ -582,19 +568,16 @@ public class DiscordBot
                 return;
             }
 
-            // Send initial "starting" message
-            await SendFollowUpMessage(applicationId, interactionToken, "🔄 Server is starting... This may take 2-3 minutes.");
+            await SendFollowUpMessage(applicationId, interactionToken, "[STARTING] Server is starting... This may take 2-3 minutes.");
 
-            // Start the server
             var (success, message) = StartServer();
             
             if (!success)
             {
-                await SendFollowUpMessage(applicationId, interactionToken, $"❌ {message}");
+                await SendFollowUpMessage(applicationId, interactionToken, $"[ERROR] {message}");
                 return;
             }
 
-            // Poll for server to be ready
             var subscriptionId = Environment.GetEnvironmentVariable("SUBSCRIPTION_ID");
             var resourceGroupName = Environment.GetEnvironmentVariable("RESOURCE_GROUP_NAME");
             var containerGroupName = Environment.GetEnvironmentVariable("CONTAINER_GROUP_NAME");
@@ -613,7 +596,7 @@ public class DiscordBot
                     if (_armClient == null || string.IsNullOrEmpty(subscriptionId) || 
                         string.IsNullOrEmpty(resourceGroupName) || string.IsNullOrEmpty(containerGroupName))
                     {
-                        await SendFollowUpMessage(applicationId, interactionToken, "❌ Azure clients not initialized");
+                        await SendFollowUpMessage(applicationId, interactionToken, "[ERROR] Azure clients not initialized");
                         return;
                     }
 
@@ -623,7 +606,6 @@ public class DiscordBot
                     var containerGroupResource = containerGroup.Value;
                     var containerGroupData = containerGroupResource.Get().Value;
                     
-                    // Check state from container instance view
                     string? state = null;
                     if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
                     {
@@ -633,7 +615,6 @@ public class DiscordBot
 
                     if (state != null && state.Equals("Running", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Get IP address
                         var ipAddressData = containerGroupData.Data.IPAddress;
                         if (ipAddressData != null)
                         {
@@ -641,7 +622,6 @@ public class DiscordBot
                             serverFqdn = ipAddressData.Fqdn;
                         }
 
-                        // Get auto-shutdown info
                         var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable("AUTO_SHUTDOWN_MINUTES") ?? "120");
                         var stateKey = containerGroupName;
                         _serverStates[stateKey] = new ServerState
@@ -651,23 +631,22 @@ public class DiscordBot
                             AutoShutdownTime = DateTime.UtcNow.AddMinutes(autoShutdownMinutes)
                         };
 
-                        // Send success message
                         var readyMessage = new StringBuilder();
-                        readyMessage.AppendLine("✅ **Server is ready!**");
+                        readyMessage.AppendLine("[SUCCESS] **Server is ready!**");
                         readyMessage.AppendLine();
                         
                         if (!string.IsNullOrEmpty(serverIp))
                         {
-                            readyMessage.AppendLine($"🌐 **IP Address:** `{serverIp}`");
+                            readyMessage.AppendLine($"**IP Address:** `{serverIp}`");
                         }
                         
                         if (!string.IsNullOrEmpty(serverFqdn))
                         {
-                            readyMessage.AppendLine($"🔗 **FQDN:** `{serverFqdn}`");
+                            readyMessage.AppendLine($"**FQDN:** `{serverFqdn}`");
                         }
                         
                         readyMessage.AppendLine();
-                        readyMessage.AppendLine($"⏰ Auto-shutdown in {autoShutdownMinutes} minutes");
+                        readyMessage.AppendLine($"Auto-shutdown in {autoShutdownMinutes} minutes");
                         readyMessage.AppendLine();
                         readyMessage.AppendLine("You can now connect to the server in Valheim!");
 
@@ -678,11 +657,10 @@ public class DiscordBot
                     else if (state != null && (state.Equals("Failed", StringComparison.OrdinalIgnoreCase) || state.Equals("Stopped", StringComparison.OrdinalIgnoreCase)))
                     {
                         await SendFollowUpMessage(applicationId, interactionToken, 
-                            $"❌ Server failed to start. Status: {state}");
+                            $"[ERROR] Server failed to start. Status: {state}");
                         return;
                     }
 
-                    // Still starting, wait and poll again
                     await Task.Delay(pollInterval);
                 }
                 catch (Exception ex)
@@ -692,26 +670,23 @@ public class DiscordBot
                 }
             }
 
-            // Timeout
             await SendFollowUpMessage(applicationId, interactionToken, 
-                "⏱️ Server is taking longer than expected to start. Please check the status with `/valheim status`");
+                "[TIMEOUT] Server is taking longer than expected to start. Please check the status with `/valheim status`");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in StartServerAndNotify");
-            // Try to send error message if we have the interaction data
             try
             {
                 if (interactionData.TryGetProperty("token", out var tokenElement) &&
                     interactionData.TryGetProperty("application_id", out var appIdElement))
                 {
                     await SendFollowUpMessage(appIdElement.GetString(), tokenElement.GetString(), 
-                        $"❌ Error: {ex.Message}");
+                        $"[ERROR] {ex.Message}");
                 }
             }
             catch
             {
-                // Ignore errors sending error message
             }
         }
     }
@@ -772,7 +747,6 @@ public class DiscordBot
             var containerGroupResource = containerGroup.Value;
             var containerGroupData = containerGroupResource.Get().Value;
             
-            // Check state from container instance view
             string? state = null;
             if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
             {
@@ -783,10 +757,8 @@ public class DiscordBot
             if (state != null && (state.Equals("Stopped", StringComparison.OrdinalIgnoreCase) || state.Equals("Terminated", StringComparison.OrdinalIgnoreCase)))
                 return (true, "Server is already stopped!");
 
-            // Delete the container group to stop it
             containerGroupResource.Delete(WaitUntil.Started);
 
-            // Update state
             _serverStates[containerGroupName] = new ServerState
             {
                 Status = "stopped",

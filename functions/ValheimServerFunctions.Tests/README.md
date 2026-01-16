@@ -37,7 +37,7 @@ The test suite covers:
 
 ## Current Status
 
-⚠️ **The test project currently has compilation errors** that need to be fixed:
+[WARNING] **The test project currently has compilation errors** that need to be fixed:
 
 1. **TestFunctionContext** - Needs to properly implement all abstract members of `FunctionContext`
 2. **TestFunctionDefinition** - Needs to implement missing properties

@@ -1,6 +1,3 @@
-# Migration Script for Valheim World Saves
-# This script migrates world save files from local storage to Azure File Share
-#
 # Usage:
 #   .\scripts\migrate-save.ps1 -ResourceGroupName "valheim-server-rg" -StorageAccountName "valheimsa" -FileShareName "valheim-worlds" -WorldName "Dedicated" -WorldDbPath "C:\path\to\world.db" -WorldFwlPath "C:\path\to\world.fwl"
 
@@ -31,7 +28,6 @@ Write-Host "Valheim World Save Migration" -ForegroundColor Cyan
 Write-Host "=============================" -ForegroundColor Cyan
 Write-Host ""
 
-# Validate input files exist
 if (-not (Test-Path $WorldDbPath)) {
     Write-Host "Error: World DB file not found: $WorldDbPath" -ForegroundColor Red
     exit 1
@@ -42,7 +38,6 @@ if (-not (Test-Path $WorldFwlPath)) {
     exit 1
 }
 
-# Validate file names match WorldName
 $dbFileName = Split-Path -Leaf $WorldDbPath
 $fwlFileName = Split-Path -Leaf $WorldFwlPath
 
@@ -61,7 +56,6 @@ Write-Host "File Share: $FileShareName" -ForegroundColor Green
 Write-Host "World Name: $WorldName" -ForegroundColor Green
 Write-Host ""
 
-# Get storage account key
 Write-Host "Retrieving storage account key..." -ForegroundColor Yellow
 $storageKey = az storage account keys list `
     --resource-group $ResourceGroupName `
@@ -74,7 +68,6 @@ if (-not $storageKey) {
     exit 1
 }
 
-# Check if world already exists
 Write-Host "Checking for existing world..." -ForegroundColor Yellow
 $worldPath = "worlds/$WorldName"
 $existingDb = az storage file exists `
@@ -104,13 +97,11 @@ if ($worldExists) {
         }
     }
     
-    # Create backup
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $backupPath = "backups/migration-backup-$timestamp/$WorldName"
     
     Write-Host "Creating backup of existing world..." -ForegroundColor Yellow
     
-    # Create backup directory structure
     az storage directory create `
         --account-name $StorageAccountName `
         --account-key $storageKey `
@@ -125,7 +116,6 @@ if ($worldExists) {
         --name "backups/migration-backup-$timestamp/$WorldName" `
         --output none 2>$null
     
-    # Copy existing files to backup
     if ($existingDb -eq "True") {
         az storage file copy start `
             --account-name $StorageAccountName `
@@ -152,7 +142,6 @@ if ($worldExists) {
     Write-Host ""
 }
 
-# Ensure world directory exists
 Write-Host "Creating world directory structure..." -ForegroundColor Yellow
 az storage directory create `
     --account-name $StorageAccountName `
@@ -161,7 +150,6 @@ az storage directory create `
     --name $worldPath `
     --output none 2>$null
 
-# Upload world files
 Write-Host "Uploading world files..." -ForegroundColor Yellow
 
 Write-Host "  Uploading $WorldName.db..." -ForegroundColor Gray
@@ -192,7 +180,6 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Verify upload
 Write-Host "Verifying upload..." -ForegroundColor Yellow
 $verifyDb = az storage file exists `
     --account-name $StorageAccountName `

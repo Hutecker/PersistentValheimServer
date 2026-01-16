@@ -52,7 +52,6 @@ public class AutoShutdown
             var containerGroupResource = containerGroup.Value;
             var containerGroupData = containerGroupResource.Get().Value;
 
-            // Check state from container instance view
             string? state = null;
             if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
             {
@@ -62,11 +61,6 @@ public class AutoShutdown
 
             if (state != null && state.Equals("Running", StringComparison.OrdinalIgnoreCase))
             {
-                // Check if auto-shutdown time has passed
-                // In production, store this in Azure Table Storage
-                // For now, we'll use a simple time-based check
-
-                // Get container start time from instance view events
                 var instanceView = containerGroupData.Data.Containers?[0].InstanceView;
                 if (instanceView?.Events != null && instanceView.Events.Any())
                 {
@@ -98,7 +92,6 @@ public class AutoShutdown
         }
         catch (Exception ex)
         {
-            // Container group might not exist (already stopped)
             _logger.LogInformation($"Container group not found or error: {ex.Message}");
         }
     }
