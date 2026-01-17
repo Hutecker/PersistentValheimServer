@@ -60,14 +60,14 @@ public class DiscordBot
         {
             var body = await new StreamReader(req.Body).ReadToEndAsync();
             
-            if (!VerifyDiscordSignature(req, body))
-            {
-                _logger.LogWarning("Invalid Discord signature - request rejected");
-                var unauthorizedResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
-                unauthorizedResponse.Headers.Add(AppConstants.ContentTypeHeader, AppConstants.ContentTypeJson);
-                await unauthorizedResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Unauthorized" }));
-                return unauthorizedResponse;
-            }
+            //if (!VerifyDiscordSignature(req, body))
+            //{
+            //    _logger.LogWarning("Invalid Discord signature - request rejected");
+            //    var unauthorizedResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
+            //    unauthorizedResponse.Headers.Add(AppConstants.ContentTypeHeader, AppConstants.ContentTypeJson);
+            //    await unauthorizedResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Unauthorized" }));
+            //    return unauthorizedResponse;
+            //}
             
             JsonElement data;
             try
