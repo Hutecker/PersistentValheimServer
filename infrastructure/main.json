@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "14984742853823192432"
+      "templateHash": "14819659694378812375"
     }
   },
   "parameters": {
@@ -78,6 +78,10 @@
     "functionStorageAccountName": "valheimfuncsa",
     "functionAppName": "valheim-func",
     "appInsightsName": "valheim-func-insights",
+    "acrNameSuffix": "[toLower(substring(uniqueString(resourceGroup().id), 0, 8))]",
+    "acrName": "[format('valheimacr{0}', variables('acrNameSuffix'))]",
+    "valheimImageName": "valheim-server",
+    "valheimImageTag": "latest",
     "deploymentContainerName": "[format('app-package-{0}', toLower(take(variables('functionAppName'), 32)))]",
     "keyVaultRoleDefId": "4633458b-17de-408a-b874-0445c86b69e6",
     "containerInstanceRoleDefId": "5d977122-f97e-4b4d-a52f-6b43003ddb4d",
@@ -126,6 +130,19 @@
       ]
     },
     {
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('acrName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Basic"
+      },
+      "properties": {
+        "adminUserEnabled": true,
+        "publicNetworkAccess": "Enabled"
+      }
+    },
+    {
       "type": "Microsoft.KeyVault/vaults",
       "apiVersion": "2023-07-01",
       "name": "[variables('keyVaultName')]",
@@ -172,6 +189,18 @@
         "value": "[parameters('discordPublicKey')]"
       },
       "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[format('{0}/{1}', variables('keyVaultName'), 'AcrPassword')]",
+      "properties": {
+        "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').passwords[0].value]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
       ]
     },
@@ -332,6 +361,22 @@
             {
               "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
               "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
+            },
+            {
+              "name": "ACR_LOGIN_SERVER",
+              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').loginServer]"
+            },
+            {
+              "name": "ACR_USERNAME",
+              "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').username]"
+            },
+            {
+              "name": "ACR_PASSWORD",
+              "value": "[format('@Microsoft.KeyVault(SecretUri={0}secrets/AcrPassword/)', reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), '2023-07-01').vaultUri)]"
+            },
+            {
+              "name": "CONTAINER_IMAGE",
+              "value": "[format('{0}/{1}:{2}', reference(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').loginServer, variables('valheimImageName'), variables('valheimImageTag'))]"
             }
           ],
           "use32BitWorkerProcess": false,
@@ -342,6 +387,7 @@
         "reserved": true
       },
       "dependsOn": [
+        "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
         "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('functionStorageAccountName'), 'default', variables('deploymentContainerName'))]",
         "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', variables('functionAppName')))]",
@@ -554,6 +600,18 @@
     "budgetLimit": {
       "type": "string",
       "value": "[format('${0}/month', parameters('monthlyBudgetLimit'))]"
+    },
+    "acrName": {
+      "type": "string",
+      "value": "[variables('acrName')]"
+    },
+    "acrLoginServer": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').loginServer]"
+    },
+    "containerImage": {
+      "type": "string",
+      "value": "[format('{0}/{1}:{2}', reference(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').loginServer, variables('valheimImageName'), variables('valheimImageTag'))]"
     }
   }
 }

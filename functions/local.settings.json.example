@@ -14,6 +14,10 @@
     "LOCATION": "eastus",
     "SUBSCRIPTION_ID": "your-subscription-id",
     "DISCORD_PUBLIC_KEY": "your-discord-public-key-here",
-    "SERVER_PASSWORD": "your-server-password-here"
+    "SERVER_PASSWORD": "your-server-password-here",
+    "ACR_LOGIN_SERVER": "valheimacrXXXX.azurecr.io (unique name - check deployment outputs)",
+    "ACR_USERNAME": "valheimacrXXXX (ACR name without .azurecr.io)",
+    "ACR_PASSWORD": "your-acr-password-here (or Key Vault reference in Azure)",
+    "CONTAINER_IMAGE": "valheimacrXXXX.azurecr.io/valheim-server:latest"
   }
 }

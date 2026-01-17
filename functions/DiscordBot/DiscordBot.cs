@@ -421,6 +421,11 @@ public class DiscordBot
             var fileShareName = Environment.GetEnvironmentVariable(EnvVars.FileShareName);
             var location = Environment.GetEnvironmentVariable(EnvVars.Location) ?? AppConstants.DefaultLocation;
 
+            var containerImage = Environment.GetEnvironmentVariable(EnvVars.ContainerImage) ?? AppConstants.ContainerImage;
+            var acrLoginServer = Environment.GetEnvironmentVariable(EnvVars.AcrLoginServer);
+            var acrUsername = Environment.GetEnvironmentVariable(EnvVars.AcrUsername);
+            var acrPassword = Environment.GetEnvironmentVariable(EnvVars.AcrPassword);
+
             if (string.IsNullOrEmpty(storageAccountName) || string.IsNullOrEmpty(fileShareName))
                 return (false, "Storage account configuration missing");
 
@@ -429,7 +434,7 @@ public class DiscordBot
             var storageKey = keys.First().Value;
 
             var azureLocation = new AzureLocation(location);
-            var container = new ContainerInstanceContainer(AppConstants.ContainerName, AppConstants.ContainerImage, 
+            var container = new ContainerInstanceContainer(AppConstants.ContainerName, containerImage, 
                 new ContainerResourceRequirements(new ContainerResourceRequestsContent(AppConstants.ContainerCpuCores, AppConstants.ContainerMemoryGb)))
             {
                 EnvironmentVariables =
@@ -482,7 +487,21 @@ public class DiscordBot
                 IPAddress = ipAddress
             };
 
-            _logger.LogInformation("Creating container group...");
+            if (!string.IsNullOrEmpty(acrLoginServer) && !string.IsNullOrEmpty(acrUsername) && !string.IsNullOrEmpty(acrPassword))
+            {
+                containerGroupData.ImageRegistryCredentials.Add(new ContainerGroupImageRegistryCredential(acrLoginServer)
+                {
+                    Username = acrUsername,
+                    Password = acrPassword
+                });
+                _logger.LogInformation("Using Azure Container Registry: {AcrServer}", acrLoginServer);
+            }
+            else
+            {
+                _logger.LogInformation("No ACR credentials configured, using public Docker Hub image");
+            }
+
+            _logger.LogInformation("Creating container group with image: {Image}", containerImage);
             resourceGroup.GetContainerGroups().CreateOrUpdate(WaitUntil.Started, containerGroupName, containerGroupData);
 
             var stateKey = containerGroupName;

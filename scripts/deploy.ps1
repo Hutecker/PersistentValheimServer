@@ -251,15 +251,63 @@ try {
     $functionAppName = $outputs.functionAppName.value
     $functionAppUrl = $outputs.functionAppUrl.value
 
+    $acrName = $outputs.acrName.value
+    $acrLoginServer = $outputs.acrLoginServer.value
+    $containerImage = $outputs.containerImage.value
+
     Write-Host "Deployment outputs:" -ForegroundColor Green
     Write-Host "  Function App: $functionAppName"
     Write-Host "  Function App URL: $functionAppUrl"
     Write-Host "  Storage Account: $($outputs.storageAccountName.value)"
     Write-Host "  Key Vault: $($outputs.keyVaultName.value)"
+    Write-Host "  Container Registry: $acrLoginServer"
+    Write-Host "  Container Image: $containerImage"
     if ($outputs.budgetConfigured.value) {
         Write-Host "  Budget: $($outputs.budgetLimit.value) (alerts configured)" -ForegroundColor Green
     } elseif (-not [string]::IsNullOrWhiteSpace($BudgetAlertEmail)) {
         Write-Host "  Budget: Not configured (email may be invalid)" -ForegroundColor Yellow
+    }
+
+    Write-Host "`nChecking if Valheim server image exists in ACR..." -ForegroundColor Yellow
+    
+    $imageExists = $false
+    try {
+        $existingTags = az acr repository show-tags --name $acrName --repository valheim-server --output json 2>$null | ConvertFrom-Json
+        if ($existingTags -and $existingTags -contains "latest") {
+            $imageExists = $true
+        }
+    } catch {
+        $imageExists = $false
+    }
+
+    if ($imageExists) {
+        Write-Host "[OK] Image already exists in ACR: $containerImage" -ForegroundColor Green
+        Write-Host "  To update the image, run: az acr import --name $acrName --source docker.io/lloesche/valheim-server:latest --image valheim-server:latest --force" -ForegroundColor Gray
+    } else {
+        Write-Host "Image not found in ACR. Importing from Docker Hub..." -ForegroundColor Yellow
+        Write-Host "  Source: docker.io/lloesche/valheim-server:latest" -ForegroundColor Gray
+        Write-Host "  Destination: $containerImage" -ForegroundColor Gray
+        Write-Host "  (This may take a few minutes...)" -ForegroundColor Gray
+        
+        try {
+            $importOutput = az acr import `
+                --name $acrName `
+                --source docker.io/lloesche/valheim-server:latest `
+                --image valheim-server:latest `
+                --output none 2>&1
+            
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "[WARNING] Failed to import image: $importOutput" -ForegroundColor Yellow
+                Write-Host "  You may need to import manually:" -ForegroundColor Gray
+                Write-Host "  az acr import --name $acrName --source docker.io/lloesche/valheim-server:latest --image valheim-server:latest" -ForegroundColor Gray
+            } else {
+                Write-Host "[OK] Image imported successfully to ACR" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "[WARNING] Error importing image: $_" -ForegroundColor Yellow
+            Write-Host "  You may need to import manually:" -ForegroundColor Gray
+            Write-Host "  az acr import --name $acrName --source docker.io/lloesche/valheim-server:latest --image valheim-server:latest" -ForegroundColor Gray
+        }
     }
 } else {
     Write-Host "`nSkipping infrastructure deployment (code-only mode)" -ForegroundColor Yellow

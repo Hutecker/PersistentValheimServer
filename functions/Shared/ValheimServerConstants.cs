@@ -90,6 +90,10 @@ public static class EnvVars
     public const string FileShareName = "FILE_SHARE_NAME";
     public const string Location = "LOCATION";
     public const string AutoShutdownMinutes = "AUTO_SHUTDOWN_MINUTES";
+    public const string AcrLoginServer = "ACR_LOGIN_SERVER";
+    public const string AcrUsername = "ACR_USERNAME";
+    public const string AcrPassword = "ACR_PASSWORD";
+    public const string ContainerImage = "CONTAINER_IMAGE";
 }
 
 public static class ContainerStateHelper

@@ -35,6 +35,11 @@ var containerGroupName = 'valheim-server'
 var functionStorageAccountName = 'valheimfuncsa'
 var functionAppName = 'valheim-func'
 var appInsightsName = 'valheim-func-insights'
+// ACR name must be globally unique - using uniqueString based on resource group for consistency
+var acrNameSuffix = toLower(substring(uniqueString(resourceGroup().id), 0, 8))
+var acrName = 'valheimacr${acrNameSuffix}'
+var valheimImageName = 'valheim-server'
+var valheimImageTag = 'latest'
 
 // Storage Account for world saves
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -68,6 +73,20 @@ resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-0
   name: fileShareName
   properties: {
     shareQuota: 100 // 100 GB should be plenty for world saves
+  }
+}
+
+// Azure Container Registry (Basic tier ~$5/month)
+// Avoids Docker Hub rate limiting issues when pulling images
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+  name: acrName
+  location: location
+  sku: {
+    name: 'Basic' // Basic tier: ~$5/month, 10GB storage, sufficient for single image
+  }
+  properties: {
+    adminUserEnabled: true // Required for ACI to pull images (ACI doesn't support managed identity for ACR yet)
+    publicNetworkAccess: 'Enabled'
   }
 }
 
@@ -112,6 +131,15 @@ resource discordPublicKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' =
   name: 'DiscordPublicKey'
   properties: {
     value: discordPublicKey
+  }
+}
+
+// ACR admin password stored in Key Vault
+resource acrPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'AcrPassword'
+  properties: {
+    value: acr.listCredentials().passwords[0].value
   }
 }
 
@@ -266,6 +294,22 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsights.properties.ConnectionString
+        }
+        {
+          name: 'ACR_LOGIN_SERVER'
+          value: acr.properties.loginServer
+        }
+        {
+          name: 'ACR_USERNAME'
+          value: acr.listCredentials().username
+        }
+        {
+          name: 'ACR_PASSWORD'
+          value: '@Microsoft.KeyVault(SecretUri=${keyVault.properties.vaultUri}secrets/AcrPassword/)'
+        }
+        {
+          name: 'CONTAINER_IMAGE'
+          value: '${acr.properties.loginServer}/${valheimImageName}:${valheimImageTag}'
         }
       ]
       use32BitWorkerProcess: false
@@ -434,3 +478,6 @@ output appInsightsName string = appInsights.name
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
 output budgetConfigured bool = !empty(budgetAlertEmail)
 output budgetLimit string = '$${monthlyBudgetLimit}/month'
+output acrName string = acr.name
+output acrLoginServer string = acr.properties.loginServer
+output containerImage string = '${acr.properties.loginServer}/${valheimImageName}:${valheimImageTag}'

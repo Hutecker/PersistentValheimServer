@@ -6,6 +6,7 @@ A cost-effective, Discord-controlled Valheim dedicated server hosted on Azure.
 
 This solution uses:
 - **Azure Container Instances (ACI)** - Runs the Valheim server on-demand (only pay when running)
+- **Azure Container Registry (ACR)** - Hosts the Valheim Docker image (avoids Docker Hub rate limits)
 - **Azure File Share** - Persistent storage for world saves
 - **Azure Functions** - Discord bot integration and auto-shutdown logic
 - **Azure Key Vault** - Secure storage for secrets (Discord token, server password)
@@ -173,6 +174,7 @@ The server will automatically shut down after the configured timeout (default: 2
 ## Architecture
 
 - **Azure Container Instances (ACI)**: Runs Valheim server on-demand
+- **Azure Container Registry (ACR)**: Hosts Valheim Docker image (Basic tier, ~$5/month)
 - **Azure File Share**: Persistent storage for world saves
 - **Azure Functions (Flex Consumption)**: Discord bot and auto-shutdown logic (.NET 10.0 isolated)
 - **Azure Key Vault**: Secure storage for secrets (accessed via Key Vault references in app settings)
@@ -183,8 +185,16 @@ The server will automatically shut down after the configured timeout (default: 2
 
 - **Running**: ~$0.10-0.15/hour (ACI + Storage)
 - **Stopped**: ~$0.01/day (Storage only)
-- **Monthly (10 hours/week)**: ~$4-6/month
+- **Azure Container Registry**: ~$5/month (Basic tier, avoids Docker Hub rate limits)
+- **Monthly (10 hours/week)**: ~$9-11/month (including ACR)
 - **Budget & Alerts**: **FREE** (no additional cost)
+
+### Why Azure Container Registry?
+
+Docker Hub has rate limits for anonymous image pulls (100 per 6 hours). Azure Container Instances share IP ranges, so you can hit these limits even with infrequent use, causing server start failures. ACR provides:
+- No rate limits within Azure network
+- Faster container startup (same datacenter)
+- Reliable image pulls every time
 
 ### Budget Alerts
 
