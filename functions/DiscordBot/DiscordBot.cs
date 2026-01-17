@@ -1,13 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Net;
-using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Azure.Core;
 using Azure.Identity;
 using Azure;
@@ -16,7 +10,6 @@ using Azure.ResourceManager.ContainerInstance;
 using Azure.ResourceManager.ContainerInstance.Models;
 using Azure.ResourceManager.Resources;
 using Azure.ResourceManager.Storage;
-using Azure.ResourceManager.Storage.Models;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -59,16 +52,16 @@ public class DiscordBot
         try
         {
             var body = await new StreamReader(req.Body).ReadToEndAsync();
-            
-            //if (!VerifyDiscordSignature(req, body))
-            //{
-            //    _logger.LogWarning("Invalid Discord signature - request rejected");
-            //    var unauthorizedResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
-            //    unauthorizedResponse.Headers.Add(AppConstants.ContentTypeHeader, AppConstants.ContentTypeJson);
-            //    await unauthorizedResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Unauthorized" }));
-            //    return unauthorizedResponse;
-            //}
-            
+
+            if (!VerifyDiscordSignature(req, body))
+            {
+                _logger.LogWarning("Invalid Discord signature - request rejected");
+                var unauthorizedResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
+                unauthorizedResponse.Headers.Add(AppConstants.ContentTypeHeader, AppConstants.ContentTypeJson);
+                await unauthorizedResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Unauthorized" }));
+                return unauthorizedResponse;
+            }
+
             JsonElement data;
             try
             {

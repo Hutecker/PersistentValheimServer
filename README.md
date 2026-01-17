@@ -147,6 +147,50 @@ If you have an existing world save, use the migration script:
   -WorldFwlPath "C:\path\to\world.fwl"
 ```
 
+#### Finding Your World Save Files on Windows
+
+Valheim stores world saves in the following location:
+
+**Local Saves:**
+```
+%UserProfile%\AppData\LocalLow\IronGate\Valheim\worlds_local
+```
+
+**Full Path Example:**
+```
+C:\Users\YourUsername\AppData\LocalLow\IronGate\Valheim\worlds_local
+```
+
+**To find your world files:**
+1. Press `Win + R` to open Run dialog
+2. Type: `%UserProfile%\AppData\LocalLow\IronGate\Valheim\worlds_local`
+3. Press Enter
+4. You'll see files like:
+   - `YourWorldName.db` - World data file
+   - `YourWorldName.fwl` - World metadata file
+
+**Important Notes:**
+- If your world is in **Steam Cloud**, first move it to local:
+  - In Valheim: **Manage Saves** → Select your world → **Move to Local**
+- The world name in the file names must match the `-WorldName` parameter
+- You need **both** `.db` and `.fwl` files for a complete world
+
+**Example Migration:**
+If your world is named "MyWorld" and you found:
+- `C:\Users\YourUsername\AppData\LocalLow\IronGate\Valheim\worlds_local\MyWorld.db`
+- `C:\Users\YourUsername\AppData\LocalLow\IronGate\Valheim\worlds_local\MyWorld.fwl`
+
+Run:
+```powershell
+.\scripts\migrate-save.ps1 `
+  -ResourceGroupName "valheim-server-rg" `
+  -StorageAccountName "valheimsa" `
+  -FileShareName "valheim-worlds" `
+  -WorldName "MyWorld" `
+  -WorldDbPath "C:\Users\YourUsername\AppData\LocalLow\IronGate\Valheim\worlds_local\MyWorld.db" `
+  -WorldFwlPath "C:\Users\YourUsername\AppData\LocalLow\IronGate\Valheim\worlds_local\MyWorld.fwl"
+```
+
 ### 5. Usage
 
 In your Discord channel:
