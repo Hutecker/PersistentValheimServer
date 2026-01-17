@@ -301,17 +301,70 @@ public class DiscordBot
             
             if (containerState == ContainerState.Running)
             {
+                var statusMessage = new StringBuilder();
+                statusMessage.AppendLine("**Server Status: RUNNING**");
+                statusMessage.AppendLine();
+
+                // Get connection information
+                string? serverIp = null;
+                string? serverFqdn = null;
+                try
+                {
+                    var subscriptionId = Environment.GetEnvironmentVariable(EnvVars.SubscriptionId);
+                    var resourceGroupName = Environment.GetEnvironmentVariable(EnvVars.ResourceGroupName);
+                    var containerGroupName = Environment.GetEnvironmentVariable(EnvVars.ContainerGroupName);
+
+                    if (_armClient != null && !string.IsNullOrEmpty(subscriptionId) && 
+                        !string.IsNullOrEmpty(resourceGroupName) && !string.IsNullOrEmpty(containerGroupName))
+                    {
+                        var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
+                        var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
+                        var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
+                        var containerGroupResource = containerGroup.Value;
+                        var containerGroupData = containerGroupResource.Get().Value;
+                        
+                        var ipAddressData = containerGroupData.Data.IPAddress;
+                        if (ipAddressData != null)
+                        {
+                            serverIp = ipAddressData.IP?.ToString();
+                            serverFqdn = ipAddressData.Fqdn;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to retrieve IP address for status command");
+                }
+
+                // Add connection information if available
+                if (!string.IsNullOrEmpty(serverIp))
+                {
+                    statusMessage.AppendLine($"**IP Address:** `{serverIp}`");
+                    statusMessage.AppendLine($"**Connection String:** `{serverIp}:2456`");
+                    statusMessage.AppendLine();
+                    statusMessage.AppendLine("**To Connect:**");
+                    statusMessage.AppendLine("1. In Valheim: Join Game → Join IP");
+                    statusMessage.AppendLine($"2. Enter: `{serverIp}:2456`");
+                    statusMessage.AppendLine("3. Enter your server password");
+                    statusMessage.AppendLine();
+                }
+
+                // Add auto-shutdown information
                 if (_serverStates.TryGetValue(stateKey, out var state) && state.StartedAt.HasValue && state.AutoShutdownTime.HasValue)
                 {
                     var timeRemaining = state.AutoShutdownTime.Value - DateTime.UtcNow;
                     if (timeRemaining.TotalSeconds > 0)
                     {
                         var mins = (int)timeRemaining.TotalMinutes;
-                        return CreateMessageResponse($"Server is **RUNNING**\nAuto-shutdown in {mins} minutes");
+                        statusMessage.AppendLine($"Auto-shutdown in {mins} minutes");
                     }
-                    return CreateMessageResponse("Server is **RUNNING**\n[WARNING] Auto-shutdown time has passed");
+                    else
+                    {
+                        statusMessage.AppendLine("[WARNING] Auto-shutdown time has passed");
+                    }
                 }
-                return CreateMessageResponse("Server is **RUNNING**");
+
+                return CreateMessageResponse(statusMessage.ToString());
             }
 
             if (containerState == ContainerState.Stopped || containerState == ContainerState.Terminated)
@@ -634,17 +687,23 @@ public class DiscordBot
                         if (!string.IsNullOrEmpty(serverIp))
                         {
                             readyMessage.AppendLine($"**IP Address:** `{serverIp}`");
+                            readyMessage.AppendLine($"**Connection String:** `{serverIp}:2456`");
                         }
                         
                         if (!string.IsNullOrEmpty(serverFqdn))
                         {
-                            readyMessage.AppendLine($"**FQDN:** `{serverFqdn}`");
+                            readyMessage.AppendLine($"**FQDN:** `{serverFqdn}` (may not work in Valheim)");
                         }
                         
                         readyMessage.AppendLine();
-                        readyMessage.AppendLine($"Auto-shutdown in {autoShutdownMinutes} minutes");
+                        readyMessage.AppendLine("**To Connect:**");
+                        readyMessage.AppendLine("1. In Valheim: Join Game → Join IP");
+                        readyMessage.AppendLine($"2. Enter: `{serverIp}:2456` (IP:PORT format)");
+                        readyMessage.AppendLine("3. Enter your server password");
                         readyMessage.AppendLine();
-                        readyMessage.AppendLine("You can now connect to the server in Valheim!");
+                        readyMessage.AppendLine("**Note:** If connection fails, wait 1-2 more minutes for server to fully initialize.");
+                        readyMessage.AppendLine();
+                        readyMessage.AppendLine($"Auto-shutdown in {autoShutdownMinutes} minutes");
 
                         await SendFollowUpMessage(applicationId, interactionToken, readyMessage.ToString());
                         _logger.LogInformation($"Server is ready! IP: {serverIp}");

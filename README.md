@@ -170,23 +170,36 @@ Once the server is started, the Discord bot will send you the connection informa
    - Open Valheim
    - Click "Join Game"
    - Click "Join IP"
-   - Enter either:
-     - The **IP Address** (e.g., `20.123.45.67`)
-     - Or the **FQDN** (e.g., `valheim-1a2b3c4d.eastus.azurecontainer.io`)
+   - Enter the connection string in format: `IP_ADDRESS:2456`
+     - Example: `20.123.45.67:2456`
+     - **Important:** You MUST include the port `:2456` in the IP field
    - Enter the server password (configured during deployment)
    - Click "Connect"
 
-2. **Using Direct IP Connection:**
+2. **Using Console Command:**
    - In Valheim, press `F5` to open the console
    - Type: `connect <IP_ADDRESS>:2456`
    - Example: `connect 20.123.45.67:2456`
    - Enter the password when prompted
 
-**Server Ports:**
-- Primary port: `2456` (UDP)
-- Additional ports: `2457`, `2458` (UDP) - used for game traffic
+**Important Notes:**
+- **Port Format:** Always use `IP:2456` format (e.g., `20.123.45.67:2456`)
+- **FQDN:** Valheim typically doesn't accept FQDN/domain names - use the IP address only
+- **Wait Time:** The server may take 3-5 minutes to fully initialize after container starts
+- If connection fails, wait 1-2 more minutes and try again
 
-**Note:** The server may take 2-3 minutes to fully start after you run `/valheim start`. Wait for the "Server is ready!" message in Discord before attempting to connect.
+**Server Ports:**
+- Primary port: `2456` (UDP) - **Use this for connections**
+- Additional ports: `2457`, `2458` (UDP) - used automatically by game
+
+**Troubleshooting Connection Issues:**
+
+If you get "Failed to connect":
+1. **Wait longer:** Server may need 3-5 minutes to fully initialize
+2. **Check format:** Ensure you're using `IP:2456` format (not just IP)
+3. **Verify server status:** Run `/valheim status` in Discord to confirm server is running
+4. **Check container logs:** In Azure Portal → Container Instance → Logs to see if server started properly
+5. **Try console command:** Use `F5` console with `connect IP:2456` instead of Join IP button
 
 ## Project Structure
 
