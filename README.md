@@ -156,6 +156,38 @@ In your Discord channel:
 
 The server will automatically shut down after the configured timeout (default: 2 hours).
 
+### 6. Connecting to the Server
+
+Once the server is started, the Discord bot will send you the connection information:
+
+**Connection Details:**
+- **IP Address**: The public IP address (e.g., `20.123.45.67`)
+- **FQDN**: The fully qualified domain name (e.g., `valheim-1a2b3c4d.eastus.azurecontainer.io`)
+
+**To Connect in Valheim:**
+
+1. **Using the Server Browser (Recommended):**
+   - Open Valheim
+   - Click "Join Game"
+   - Click "Join IP"
+   - Enter either:
+     - The **IP Address** (e.g., `20.123.45.67`)
+     - Or the **FQDN** (e.g., `valheim-1a2b3c4d.eastus.azurecontainer.io`)
+   - Enter the server password (configured during deployment)
+   - Click "Connect"
+
+2. **Using Direct IP Connection:**
+   - In Valheim, press `F5` to open the console
+   - Type: `connect <IP_ADDRESS>:2456`
+   - Example: `connect 20.123.45.67:2456`
+   - Enter the password when prompted
+
+**Server Ports:**
+- Primary port: `2456` (UDP)
+- Additional ports: `2457`, `2458` (UDP) - used for game traffic
+
+**Note:** The server may take 2-3 minutes to fully start after you run `/valheim start`. Wait for the "Server is ready!" message in Discord before attempting to connect.
+
 ## Project Structure
 
 ```
