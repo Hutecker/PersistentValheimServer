@@ -28,7 +28,7 @@ param(
     [string]$ServerName = "Valheim Server",
     
     [Parameter(Mandatory=$false)]
-    [int]$AutoShutdownMinutes = 120,
+    [int]$AutoShutdownMinutes = 720, # 12 hours
     
     [Parameter(Mandatory=$false)]
     [string]$SubscriptionId = "",

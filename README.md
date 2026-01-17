@@ -14,7 +14,7 @@ This solution uses:
 ### Cost Optimization Strategy
 
 - Server only runs when needed (started via Discord)
-- Automatic shutdown after configurable timeout (default: 2 hours)
+- Automatic shutdown after configurable timeout (default: 12 hours)
 - Uses Azure Container Instances (pay-per-second billing)
 - Burstable compute tier for cost efficiency
 - Estimated cost: ~$0.10-0.15/hour when running
@@ -66,7 +66,7 @@ Run the deployment script with your values:
   -DiscordPublicKey "YOUR_64_CHARACTER_HEX_PUBLIC_KEY_HERE" `
   -ServerPassword "YOUR_SERVER_PASSWORD_HERE" `
   -ServerName "My Valheim Server" `
-  -AutoShutdownMinutes 120 `
+  -AutoShutdownMinutes 720 `
   -MonthlyBudgetLimit 30.0 `
   -BudgetAlertEmail "your-email@example.com"
 ```
@@ -81,7 +81,7 @@ Run the deployment script with your values:
   -DiscordPublicKey "9220348032faaf2e50d7a71af23f69a80492b966a6e363e7ccbb12a81880cf0c" `
   -ServerPassword "YourSecurePassword123" `
   -ServerName "My Valheim Server" `
-  -AutoShutdownMinutes 120 `
+  -AutoShutdownMinutes 720 `
   -MonthlyBudgetLimit 30.0 `
   -BudgetAlertEmail "your-email@example.com"
 ```
@@ -112,7 +112,7 @@ For faster iterations during development, you can deploy only the Function App c
   -DiscordPublicKey "YOUR_64_CHARACTER_HEX_PUBLIC_KEY_HERE" `
   -ServerPassword "YOUR_SERVER_PASSWORD_HERE" `
   -ServerName "My Valheim Server" `
-  -AutoShutdownMinutes 120 `
+  -AutoShutdownMinutes 720 `
   -MonthlyBudgetLimit 30.0 `
   -BudgetAlertEmail "your-email@example.com"
 ```
@@ -198,7 +198,7 @@ In your Discord channel:
 - `/valheim stop` - Stop the server
 - `/valheim status` - Check server status
 
-The server will automatically shut down after the configured timeout (default: 2 hours).
+The server will automatically shut down after the configured timeout (default: 12 hours).
 
 ### 6. Connecting to the Server
 

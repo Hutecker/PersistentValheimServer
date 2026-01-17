@@ -75,7 +75,7 @@ public static class AppConstants
     
     public const string DefaultLocation = "eastus";
     public const string DefaultServerName = "Valheim Server";
-    public const int DefaultAutoShutdownMinutes = 120;
+    public const int DefaultAutoShutdownMinutes = 720; // 12 hours
 }
 
 public static class EnvVars

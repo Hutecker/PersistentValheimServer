@@ -17,7 +17,7 @@ param serverPassword string
 param serverName string = 'Valheim Server'
 
 @description('Auto-shutdown timeout in minutes')
-param autoShutdownMinutes int = 120
+param autoShutdownMinutes int = 720 // 12 hours
 
 @description('Monthly budget limit in USD (100% threshold)')
 param monthlyBudgetLimit int = 30

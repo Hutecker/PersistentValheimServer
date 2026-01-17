@@ -9,7 +9,7 @@
     "FILE_SHARE_NAME": "valheim-worlds",
     "CONTAINER_GROUP_NAME": "valheim-server",
     "RESOURCE_GROUP_NAME": "valheim-server-rg",
-    "AUTO_SHUTDOWN_MINUTES": "120",
+    "AUTO_SHUTDOWN_MINUTES": "720",
     "SERVER_NAME": "My Valheim Server",
     "LOCATION": "eastus",
     "SUBSCRIPTION_ID": "your-subscription-id",

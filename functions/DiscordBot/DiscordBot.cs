@@ -298,7 +298,6 @@ public class DiscordBot
                 statusMessage.AppendLine("**Server Status: RUNNING**");
                 statusMessage.AppendLine();
 
-                // Get connection information
                 string? serverIp = null;
                 string? serverFqdn = null;
                 try
@@ -329,7 +328,6 @@ public class DiscordBot
                     _logger.LogWarning(ex, "Failed to retrieve IP address for status command");
                 }
 
-                // Add connection information if available
                 if (!string.IsNullOrEmpty(serverIp))
                 {
                     statusMessage.AppendLine($"**IP Address:** `{serverIp}`");
@@ -342,7 +340,6 @@ public class DiscordBot
                     statusMessage.AppendLine();
                 }
 
-                // Add auto-shutdown information
                 if (_serverStates.TryGetValue(stateKey, out var state) && state.StartedAt.HasValue && state.AutoShutdownTime.HasValue)
                 {
                     var timeRemaining = state.AutoShutdownTime.Value - DateTime.UtcNow;

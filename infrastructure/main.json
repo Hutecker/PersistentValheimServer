@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "14819659694378812375"
+      "templateHash": "3926579726095318134"
     }
   },
   "parameters": {
@@ -43,7 +43,7 @@
     },
     "autoShutdownMinutes": {
       "type": "int",
-      "defaultValue": 120,
+      "defaultValue": 720,
       "metadata": {
         "description": "Auto-shutdown timeout in minutes"
       }
