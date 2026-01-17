@@ -62,7 +62,7 @@ public static class AppConstants
     public const string StatusSubcommand = "status";
     
     public const string ContainerName = "valheim-server";
-    public const string ContainerImage = "lloesche/valheim-server:latest";
+    public const string ContainerImage = "docker.io/lloesche/valheim-server:latest";
     public const string VolumeNameWorldData = "world-data";
     public const string VolumeMountPath = "/config";
     public const string DefaultWorldName = "Dedicated";

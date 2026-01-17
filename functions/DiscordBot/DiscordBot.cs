@@ -496,6 +496,38 @@ public class DiscordBot
 
             return (true, $"Server is starting! It will automatically shut down in {autoShutdownMinutes} minutes.");
         }
+        catch (RequestFailedException ex) when (ex.Status == 409 && ex.ErrorCode == "MissingSubscriptionRegistration")
+        {
+            _logger.LogError(ex, "Container Instance resource provider not registered");
+            return (false, "**Configuration Error**\n\n" +
+                "Your Azure subscription is not registered to use Container Instances.\n\n" +
+                "**To fix this:**\n" +
+                "1. Go to Azure Portal → Subscriptions → Your Subscription → Resource providers\n" +
+                "2. Search for 'Microsoft.ContainerInstance'\n" +
+                "3. Click 'Register' and wait for it to complete\n\n" +
+                "Or use Azure CLI:\n" +
+                "`az provider register --namespace Microsoft.ContainerInstance`\n\n" +
+                "After registration completes (usually 1-2 minutes), try starting the server again.");
+        }
+        catch (RequestFailedException ex) when (ex.Status == 409 && ex.ErrorCode == "RegistryErrorResponse")
+        {
+            _logger.LogError(ex, "Docker registry error when pulling container image");
+            return (false, "**Docker Registry Error**\n\n" +
+                "Unable to pull the container image from Docker Hub. This is usually a temporary issue.\n\n" +
+                "**Possible causes:**\n" +
+                "• Docker Hub is experiencing issues\n" +
+                "• Rate limiting from Docker Hub (anonymous pulls)\n" +
+                "• Network connectivity issues\n\n" +
+                "**What to do:**\n" +
+                "• Wait a few minutes and try again\n" +
+                "• Check Docker Hub status: https://status.docker.com\n" +
+                "• If the issue persists, the container image may need to be pulled to a private Azure Container Registry");
+        }
+        catch (RequestFailedException ex)
+        {
+            _logger.LogError(ex, "Azure API error starting server. Status: {Status}, ErrorCode: {ErrorCode}", ex.Status, ex.ErrorCode);
+            return (false, $"**Azure Error** ({ex.Status})\n\n{ex.Message}");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error starting server");
