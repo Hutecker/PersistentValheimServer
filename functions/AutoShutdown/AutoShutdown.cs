@@ -28,14 +28,14 @@ public class AutoShutdown
     public void Run([TimerTrigger("0 */60 * * * *")] TimerInfo myTimer)
     {
         var utcTimestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
-        _logger.LogInformation($"C# timer trigger function executed at: {utcTimestamp}");
+        _logger.LogInformation($"AutoShutdown timer trigger executed at: {utcTimestamp}");
 
         try
         {
-            var subscriptionId = Environment.GetEnvironmentVariable("SUBSCRIPTION_ID");
-            var resourceGroupName = Environment.GetEnvironmentVariable("RESOURCE_GROUP_NAME");
-            var containerGroupName = Environment.GetEnvironmentVariable("CONTAINER_GROUP_NAME");
-            var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable("AUTO_SHUTDOWN_MINUTES") ?? "120");
+            var subscriptionId = Environment.GetEnvironmentVariable(EnvVars.SubscriptionId);
+            var resourceGroupName = Environment.GetEnvironmentVariable(EnvVars.ResourceGroupName);
+            var containerGroupName = Environment.GetEnvironmentVariable(EnvVars.ContainerGroupName);
+            var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable(EnvVars.AutoShutdownMinutes) ?? AppConstants.DefaultAutoShutdownMinutes.ToString());
 
             if (_armClient == null || string.IsNullOrEmpty(subscriptionId) || string.IsNullOrEmpty(resourceGroupName) || string.IsNullOrEmpty(containerGroupName))
             {
@@ -49,14 +49,14 @@ public class AutoShutdown
             var containerGroupResource = containerGroup.Value;
             var containerGroupData = containerGroupResource.Get().Value;
 
-            string? state = null;
+            ContainerState state = ContainerState.Unknown;
             if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
             {
                 var container = containerGroupData.Data.Containers[0];
-                state = container.InstanceView?.CurrentState?.State;
+                state = ContainerStateHelper.ParseContainerState(container.InstanceView?.CurrentState?.State);
             }
 
-            if (state != null && state.Equals("Running", StringComparison.OrdinalIgnoreCase))
+            if (state == ContainerState.Running)
             {
                 var instanceView = containerGroupData.Data.Containers?[0].InstanceView;
                 if (instanceView?.Events != null && instanceView.Events.Any())

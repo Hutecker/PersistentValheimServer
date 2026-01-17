@@ -33,7 +33,7 @@ public class DiscordBot
 
     private class ServerState
     {
-        public string Status { get; set; } = "stopped";
+        public ServerStatus Status { get; set; } = ServerStatus.Stopped;
         public DateTime? StartedAt { get; set; }
         public DateTime? AutoShutdownTime { get; set; }
     }
@@ -64,7 +64,7 @@ public class DiscordBot
             {
                 _logger.LogWarning("Invalid Discord signature - request rejected");
                 var unauthorizedResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
-                unauthorizedResponse.Headers.Add("Content-Type", "application/json");
+                unauthorizedResponse.Headers.Add(AppConstants.ContentTypeHeader, AppConstants.ContentTypeJson);
                 await unauthorizedResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Unauthorized" }));
                 return unauthorizedResponse;
             }
@@ -78,14 +78,14 @@ public class DiscordBot
             {
                 _logger.LogError(ex, "Failed to parse request body as JSON");
                 var badRequestResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                badRequestResponse.Headers.Add("Content-Type", "application/json");
+                badRequestResponse.Headers.Add(AppConstants.ContentTypeHeader, AppConstants.ContentTypeJson);
                 await badRequestResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Invalid JSON" }));
                 return badRequestResponse;
             }
 
             var responseData = await HandleDiscordInteractionAsync(data);
             var response = req.CreateResponse(HttpStatusCode.OK);
-            response.Headers.Add("Content-Type", "application/json");
+            response.Headers.Add(AppConstants.ContentTypeHeader, AppConstants.ContentTypeJson);
 
             await response.WriteStringAsync(JsonSerializer.Serialize(responseData));
             return response;
@@ -94,7 +94,7 @@ public class DiscordBot
         {
             _logger.LogError(ex, "Error processing request");
             var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
-            errorResponse.Headers.Add("Content-Type", "application/json");
+            errorResponse.Headers.Add(AppConstants.ContentTypeHeader, AppConstants.ContentTypeJson);
             await errorResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = ex.Message }));
             return errorResponse;
         }
@@ -104,8 +104,8 @@ public class DiscordBot
     {
         try
         {
-            if (!req.Headers.TryGetValues("X-Signature-Ed25519", out var signatureHeader) ||
-                !req.Headers.TryGetValues("X-Signature-Timestamp", out var timestampHeader))
+            if (!req.Headers.TryGetValues(AppConstants.DiscordSignatureHeader, out var signatureHeader) ||
+                !req.Headers.TryGetValues(AppConstants.DiscordTimestampHeader, out var timestampHeader))
             {
                 _logger.LogWarning("Missing Discord signature headers - request rejected");
                 return false;
@@ -120,7 +120,7 @@ public class DiscordBot
                 return false;
             }
 
-            var publicKeyHex = Environment.GetEnvironmentVariable("DISCORD_PUBLIC_KEY");
+            var publicKeyHex = Environment.GetEnvironmentVariable(EnvVars.DiscordPublicKey);
 
             if (string.IsNullOrEmpty(publicKeyHex))
             {
@@ -191,45 +191,57 @@ public class DiscordBot
     private async Task<object> HandleDiscordInteractionAsync(JsonElement data)
     {
         if (!data.TryGetProperty("type", out var typeElement))
-            return new { type = 1 }; // PONG
+            return CreatePongResponse();
 
-        var interactionType = typeElement.GetInt32();
+        var interactionType = (DiscordInteractionType)typeElement.GetInt32();
 
-        if (interactionType == 1) // PING
-            return new { type = 1 }; // PONG
+        if (interactionType == DiscordInteractionType.Ping)
+            return CreatePongResponse();
 
-        if (interactionType == 2) // APPLICATION_COMMAND
+        if (interactionType == DiscordInteractionType.ApplicationCommand)
         {
             if (!data.TryGetProperty("data", out var dataElement))
-                return new { type = 4, data = new { content = "Unknown command" } };
+                return CreateMessageResponse("Unknown command");
 
             if (!dataElement.TryGetProperty("name", out var nameElement))
-                return new { type = 4, data = new { content = "Unknown command" } };
+                return CreateMessageResponse("Unknown command");
 
             var commandName = nameElement.GetString();
-            if (commandName != "valheim")
-                return new { type = 4, data = new { content = "Unknown command" } };
+            if (commandName != AppConstants.ValheimCommandName)
+                return CreateMessageResponse("Unknown command");
 
             if (!dataElement.TryGetProperty("options", out var optionsElement) || optionsElement.ValueKind != JsonValueKind.Array)
-                return new { type = 4, data = new { content = "No subcommand provided" } };
+                return CreateMessageResponse("No subcommand provided");
 
             var options = optionsElement.EnumerateArray().ToList();
             if (options.Count == 0)
-                return new { type = 4, data = new { content = "No subcommand provided" } };
+                return CreateMessageResponse("No subcommand provided");
 
             var subcommand = options[0].GetProperty("name").GetString();
 
             return subcommand switch
             {
-                "start" => await HandleStartCommandAsync(data),
-                "stop" => HandleStopCommand(),
-                "status" => HandleStatusCommand(),
-                _ => new { type = 4, data = new { content = "Unknown subcommand" } }
+                AppConstants.StartSubcommand => await HandleStartCommandAsync(data),
+                AppConstants.StopSubcommand => HandleStopCommand(),
+                AppConstants.StatusSubcommand => HandleStatusCommand(),
+                _ => CreateMessageResponse("Unknown subcommand")
             };
         }
 
-        return new { type = 1 }; // PONG
+        return CreatePongResponse();
     }
+
+    private static object CreatePongResponse() => new { type = (int)DiscordResponseType.Pong };
+
+    private static object CreateMessageResponse(string content, DiscordMessageFlags flags = DiscordMessageFlags.None)
+    {
+        if (flags == DiscordMessageFlags.None)
+            return new { type = (int)DiscordResponseType.ChannelMessageWithSource, data = new { content } };
+        
+        return new { type = (int)DiscordResponseType.ChannelMessageWithSource, data = new { content, flags = (int)flags } };
+    }
+
+    private static object CreateDeferredResponse() => new { type = (int)DiscordResponseType.DeferredChannelMessageWithSource };
 
     private async Task<object> HandleStartCommandAsync(JsonElement interactionData)
     {
@@ -238,15 +250,7 @@ public class DiscordBot
             if (!interactionData.TryGetProperty("token", out var tokenElement) ||
                 !interactionData.TryGetProperty("application_id", out var appIdElement))
             {
-                return new
-                {
-                    type = 4,
-                    data = new
-                    {
-                        content = "**Error** Missing interaction data",
-                        flags = 64
-                    }
-                };
+                return CreateMessageResponse("**Error** Missing interaction data", DiscordMessageFlags.Ephemeral);
             }
 
             var interactionToken = tokenElement.GetString();
@@ -256,7 +260,7 @@ public class DiscordBot
             {
                 try
                 {
-                    await StartServerAndNotify(interactionData, applicationId, interactionToken);
+                    await StartServerAndNotify(applicationId, interactionToken);
                 }
                 catch (Exception ex)
                 {
@@ -265,23 +269,12 @@ public class DiscordBot
                 }
             });
 
-            return new
-            {
-                type = 5
-            };
+            return CreateDeferredResponse();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in start command");
-            return new
-            {
-                type = 4,
-                data = new
-                {
-                    content = $"**Error** Error starting server: {ex.Message}",
-                    flags = 64
-                }
-            };
+            return CreateMessageResponse($"**Error** Error starting server: {ex.Message}", DiscordMessageFlags.Ephemeral);
         }
     }
 
@@ -290,28 +283,12 @@ public class DiscordBot
         try
         {
             var (success, message) = StopServer();
-            return new
-            {
-                type = 4,
-                data = new
-                {
-                    content = message,
-                    flags = success ? 0 : 64
-                }
-            };
+            return CreateMessageResponse(message, success ? DiscordMessageFlags.None : DiscordMessageFlags.Ephemeral);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in stop command");
-            return new
-            {
-                type = 4,
-                data = new
-                {
-                    content = $"Error stopping server: {ex.Message}",
-                    flags = 64
-                }
-            };
+            return CreateMessageResponse($"Error stopping server: {ex.Message}", DiscordMessageFlags.Ephemeral);
         }
     }
 
@@ -319,10 +296,10 @@ public class DiscordBot
     {
         try
         {
-            var status = GetServerStatus();
-            var stateKey = Environment.GetEnvironmentVariable("CONTAINER_GROUP_NAME") ?? "valheim-server";
+            var containerState = GetContainerState();
+            var stateKey = Environment.GetEnvironmentVariable(EnvVars.ContainerGroupName) ?? AppConstants.ContainerName;
             
-            if (status == "running")
+            if (containerState == ContainerState.Running)
             {
                 if (_serverStates.TryGetValue(stateKey, out var state) && state.StartedAt.HasValue && state.AutoShutdownTime.HasValue)
                 {
@@ -330,61 +307,37 @@ public class DiscordBot
                     if (timeRemaining.TotalSeconds > 0)
                     {
                         var mins = (int)timeRemaining.TotalMinutes;
-                        return new
-                        {
-                            type = 4,
-                            data = new { content = $"Server is **RUNNING**\nAuto-shutdown in {mins} minutes" }
-                        };
+                        return CreateMessageResponse($"Server is **RUNNING**\nAuto-shutdown in {mins} minutes");
                     }
-                    return new
-                    {
-                        type = 4,
-                        data = new { content = "Server is **RUNNING**\n[WARNING] Auto-shutdown time has passed" }
-                    };
+                    return CreateMessageResponse("Server is **RUNNING**\n[WARNING] Auto-shutdown time has passed");
                 }
-                return new
-                {
-                    type = 4,
-                    data = new { content = "Server is **RUNNING**" }
-                };
+                return CreateMessageResponse("Server is **RUNNING**");
             }
 
-            if (status == "stopped")
+            if (containerState == ContainerState.Stopped || containerState == ContainerState.Terminated)
             {
-                return new
-                {
-                    type = 4,
-                    data = new { content = "Server is **STOPPED**\nUse `/valheim start` to start the server." }
-                };
+                return CreateMessageResponse("Server is **STOPPED**\nUse `/valheim start` to start the server.");
             }
 
-            return new
-            {
-                type = 4,
-                data = new { content = $"**Error** Unable to determine server status.\nPlease try again or use `/valheim start` to start the server." }
-            };
+            return CreateMessageResponse("**Error** Unable to determine server status.\nPlease try again or use `/valheim start` to start the server.");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in status command");
-            return new
-            {
-                type = 4,
-                data = new { content = $"Error checking status: {ex.Message}" }
-            };
+            return CreateMessageResponse($"Error checking status: {ex.Message}");
         }
     }
 
-    private string GetServerStatus()
+    private ContainerState GetContainerState()
     {
         try
         {
-            var subscriptionId = Environment.GetEnvironmentVariable("SUBSCRIPTION_ID");
-            var resourceGroupName = Environment.GetEnvironmentVariable("RESOURCE_GROUP_NAME");
-            var containerGroupName = Environment.GetEnvironmentVariable("CONTAINER_GROUP_NAME");
+            var subscriptionId = Environment.GetEnvironmentVariable(EnvVars.SubscriptionId);
+            var resourceGroupName = Environment.GetEnvironmentVariable(EnvVars.ResourceGroupName);
+            var containerGroupName = Environment.GetEnvironmentVariable(EnvVars.ContainerGroupName);
 
             if (_armClient == null || string.IsNullOrEmpty(subscriptionId) || string.IsNullOrEmpty(resourceGroupName) || string.IsNullOrEmpty(containerGroupName))
-                return "unknown";
+                return ContainerState.Unknown;
 
             var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
             var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
@@ -396,21 +349,21 @@ public class DiscordBot
             if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
             {
                 var container = containerGroupData.Data.Containers[0];
-                var state = container.InstanceView?.CurrentState?.State ?? "Unknown";
-                return state.ToLower();
+                var stateString = container.InstanceView?.CurrentState?.State;
+                return ContainerStateHelper.ParseContainerState(stateString);
             }
 
-            return "stopped";
+            return ContainerState.Stopped;
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
             _logger.LogInformation("Container group does not exist - server has not been started");
-            return "stopped";
+            return ContainerState.Stopped;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error checking server status");
-            return "unknown";
+            return ContainerState.Unknown;
         }
     }
 
@@ -418,9 +371,9 @@ public class DiscordBot
     {
         try
         {
-            var subscriptionId = Environment.GetEnvironmentVariable("SUBSCRIPTION_ID");
-            var resourceGroupName = Environment.GetEnvironmentVariable("RESOURCE_GROUP_NAME");
-            var containerGroupName = Environment.GetEnvironmentVariable("CONTAINER_GROUP_NAME");
+            var subscriptionId = Environment.GetEnvironmentVariable(EnvVars.SubscriptionId);
+            var resourceGroupName = Environment.GetEnvironmentVariable(EnvVars.ResourceGroupName);
+            var containerGroupName = Environment.GetEnvironmentVariable(EnvVars.ContainerGroupName);
 
             if (_armClient == null || string.IsNullOrEmpty(subscriptionId) || string.IsNullOrEmpty(resourceGroupName) || string.IsNullOrEmpty(containerGroupName))
                 return (false, "Azure clients not initialized");
@@ -437,49 +390,52 @@ public class DiscordBot
                 if (existingContainerGroupData.Data.Containers != null && existingContainerGroupData.Data.Containers.Count > 0)
                 {
                     var existingContainer = existingContainerGroupData.Data.Containers[0];
-                    var state = existingContainer.InstanceView?.CurrentState?.State ?? "Unknown";
+                    var state = ContainerStateHelper.ParseContainerState(existingContainer.InstanceView?.CurrentState?.State);
                     
-                    if (state.Equals("Running", StringComparison.OrdinalIgnoreCase))
+                    if (state == ContainerState.Running)
                         return (true, "Server is already running!");
 
-                    if (state.Equals("Stopped", StringComparison.OrdinalIgnoreCase) || state.Equals("Terminated", StringComparison.OrdinalIgnoreCase))
+                    if (state == ContainerState.Stopped || state == ContainerState.Terminated)
                     {
                         _logger.LogInformation("Deleting stopped container group before recreating...");
                         containerGroupResource.Delete(WaitUntil.Completed);
                     }
                 }
             }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                _logger.LogInformation("Container group doesn't exist yet, will create new one");
+            }
             catch (Exception ex)
             {
                 _logger.LogInformation($"Container group doesn't exist yet: {ex.Message}");
             }
 
-            var serverPassword = Environment.GetEnvironmentVariable("SERVER_PASSWORD");
+            var serverPassword = Environment.GetEnvironmentVariable(EnvVars.ServerPassword);
             if (string.IsNullOrEmpty(serverPassword))
             {
-                return (false, "SERVER_PASSWORD app setting not configured");
+                return (false, $"{EnvVars.ServerPassword} app setting not configured");
             }
-            var serverName = Environment.GetEnvironmentVariable("SERVER_NAME") ?? "Valheim Server";
-            var storageAccountName = Environment.GetEnvironmentVariable("STORAGE_ACCOUNT_NAME");
-            var fileShareName = Environment.GetEnvironmentVariable("FILE_SHARE_NAME");
-            var location = Environment.GetEnvironmentVariable("LOCATION") ?? "eastus";
+            var serverName = Environment.GetEnvironmentVariable(EnvVars.ServerName) ?? AppConstants.DefaultServerName;
+            var storageAccountName = Environment.GetEnvironmentVariable(EnvVars.StorageAccountName);
+            var fileShareName = Environment.GetEnvironmentVariable(EnvVars.FileShareName);
+            var location = Environment.GetEnvironmentVariable(EnvVars.Location) ?? AppConstants.DefaultLocation;
 
             if (string.IsNullOrEmpty(storageAccountName) || string.IsNullOrEmpty(fileShareName))
                 return (false, "Storage account configuration missing");
 
-            // ACI doesn't support managed identity for Azure Files mounts, so retrieve key using managed identity
             var storageAccount = resourceGroup.GetStorageAccount(storageAccountName).Value;
             var keys = storageAccount.GetKeys();
             var storageKey = keys.First().Value;
 
             var azureLocation = new AzureLocation(location);
-            var container = new ContainerInstanceContainer("valheim-server", "lloesche/valheim-server:latest", 
-                new ContainerResourceRequirements(new ContainerResourceRequestsContent(2.0, 4.0)))
+            var container = new ContainerInstanceContainer(AppConstants.ContainerName, AppConstants.ContainerImage, 
+                new ContainerResourceRequirements(new ContainerResourceRequestsContent(AppConstants.ContainerCpuCores, AppConstants.ContainerMemoryGb)))
             {
                 EnvironmentVariables =
                 {
                     new ContainerEnvironmentVariable("SERVER_NAME") { Value = serverName },
-                    new ContainerEnvironmentVariable("WORLD_NAME") { Value = "Dedicated" },
+                    new ContainerEnvironmentVariable("WORLD_NAME") { Value = AppConstants.DefaultWorldName },
                     new ContainerEnvironmentVariable("SERVER_PASS") { SecureValue = serverPassword },
                     new ContainerEnvironmentVariable("SERVER_PUBLIC") { Value = "1" },
                     new ContainerEnvironmentVariable("BACKUPS") { Value = "1" },
@@ -488,21 +444,21 @@ public class DiscordBot
                 },
                 VolumeMounts =
                 {
-                    new ContainerVolumeMount("world-data", "/config")
+                    new ContainerVolumeMount(AppConstants.VolumeNameWorldData, AppConstants.VolumeMountPath)
                 },
                 Ports =
                 {
-                    new ContainerPort(2456) { Protocol = ContainerNetworkProtocol.Udp },
-                    new ContainerPort(2457) { Protocol = ContainerNetworkProtocol.Udp },
-                    new ContainerPort(2458) { Protocol = ContainerNetworkProtocol.Udp }
+                    new ContainerPort(AppConstants.ValheimPort1) { Protocol = ContainerNetworkProtocol.Udp },
+                    new ContainerPort(AppConstants.ValheimPort2) { Protocol = ContainerNetworkProtocol.Udp },
+                    new ContainerPort(AppConstants.ValheimPort3) { Protocol = ContainerNetworkProtocol.Udp }
                 }
             };
 
             var ipAddressPorts = new List<ContainerGroupPort>
             {
-                new ContainerGroupPort(2456) { Protocol = ContainerGroupNetworkProtocol.Udp },
-                new ContainerGroupPort(2457) { Protocol = ContainerGroupNetworkProtocol.Udp },
-                new ContainerGroupPort(2458) { Protocol = ContainerGroupNetworkProtocol.Udp }
+                new ContainerGroupPort(AppConstants.ValheimPort1) { Protocol = ContainerGroupNetworkProtocol.Udp },
+                new ContainerGroupPort(AppConstants.ValheimPort2) { Protocol = ContainerGroupNetworkProtocol.Udp },
+                new ContainerGroupPort(AppConstants.ValheimPort3) { Protocol = ContainerGroupNetworkProtocol.Udp }
             };
 
             var ipAddress = new ContainerGroupIPAddress(ipAddressPorts, ContainerGroupIPAddressType.Public)
@@ -515,7 +471,7 @@ public class DiscordBot
                 RestartPolicy = ContainerGroupRestartPolicy.Never,
                 Volumes =
                 {
-                    new ContainerVolume("world-data")
+                    new ContainerVolume(AppConstants.VolumeNameWorldData)
                     {
                         AzureFile = new ContainerInstanceAzureFileVolume(fileShareName, storageAccountName)
                         {
@@ -530,10 +486,10 @@ public class DiscordBot
             resourceGroup.GetContainerGroups().CreateOrUpdate(WaitUntil.Started, containerGroupName, containerGroupData);
 
             var stateKey = containerGroupName;
-            var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable("AUTO_SHUTDOWN_MINUTES") ?? "120");
+            var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable(EnvVars.AutoShutdownMinutes) ?? AppConstants.DefaultAutoShutdownMinutes.ToString());
             _serverStates[stateKey] = new ServerState
             {
-                Status = "starting",
+                Status = ServerStatus.Starting,
                 StartedAt = DateTime.UtcNow,
                 AutoShutdownTime = DateTime.UtcNow.AddMinutes(autoShutdownMinutes)
             };
@@ -547,7 +503,7 @@ public class DiscordBot
         }
     }
 
-    private async Task StartServerAndNotify(JsonElement interactionData, string? applicationId, string? interactionToken)
+    private async Task StartServerAndNotify(string? applicationId, string? interactionToken)
     {
         try
         {
@@ -567,9 +523,9 @@ public class DiscordBot
                 return;
             }
 
-            var subscriptionId = Environment.GetEnvironmentVariable("SUBSCRIPTION_ID");
-            var resourceGroupName = Environment.GetEnvironmentVariable("RESOURCE_GROUP_NAME");
-            var containerGroupName = Environment.GetEnvironmentVariable("CONTAINER_GROUP_NAME");
+            var subscriptionId = Environment.GetEnvironmentVariable(EnvVars.SubscriptionId);
+            var resourceGroupName = Environment.GetEnvironmentVariable(EnvVars.ResourceGroupName);
+            var containerGroupName = Environment.GetEnvironmentVariable(EnvVars.ContainerGroupName);
             var maxWaitTime = TimeSpan.FromMinutes(5);
             var pollInterval = TimeSpan.FromSeconds(10);
             var startTime = DateTime.UtcNow;
@@ -595,14 +551,14 @@ public class DiscordBot
                     var containerGroupResource = containerGroup.Value;
                     var containerGroupData = containerGroupResource.Get().Value;
                     
-                    string? state = null;
+                    ContainerState state = ContainerState.Unknown;
                     if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
                     {
                         var container = containerGroupData.Data.Containers[0];
-                        state = container.InstanceView?.CurrentState?.State;
+                        state = ContainerStateHelper.ParseContainerState(container.InstanceView?.CurrentState?.State);
                     }
 
-                    if (state != null && state.Equals("Running", StringComparison.OrdinalIgnoreCase))
+                    if (state == ContainerState.Running)
                     {
                         var ipAddressData = containerGroupData.Data.IPAddress;
                         if (ipAddressData != null)
@@ -611,11 +567,11 @@ public class DiscordBot
                             serverFqdn = ipAddressData.Fqdn;
                         }
 
-                        var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable("AUTO_SHUTDOWN_MINUTES") ?? "120");
+                        var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable(EnvVars.AutoShutdownMinutes) ?? AppConstants.DefaultAutoShutdownMinutes.ToString());
                         var stateKey = containerGroupName;
                         _serverStates[stateKey] = new ServerState
                         {
-                            Status = "running",
+                            Status = ServerStatus.Running,
                             StartedAt = DateTime.UtcNow,
                             AutoShutdownTime = DateTime.UtcNow.AddMinutes(autoShutdownMinutes)
                         };
@@ -643,7 +599,7 @@ public class DiscordBot
                         _logger.LogInformation($"Server is ready! IP: {serverIp}");
                         return;
                     }
-                    else if (state != null && (state.Equals("Failed", StringComparison.OrdinalIgnoreCase) || state.Equals("Stopped", StringComparison.OrdinalIgnoreCase)))
+                    else if (state == ContainerState.Failed || state == ContainerState.Stopped)
                     {
                         await SendFollowUpMessage(applicationId, interactionToken, 
                             $"**Error** Server failed to start. Status: {state}");
@@ -665,17 +621,16 @@ public class DiscordBot
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in StartServerAndNotify");
-            try
+
+            if (!string.IsNullOrEmpty(applicationId) && !string.IsNullOrEmpty(interactionToken))
             {
-                if (interactionData.TryGetProperty("token", out var tokenElement) &&
-                    interactionData.TryGetProperty("application_id", out var appIdElement))
+                try
                 {
-                    await SendFollowUpMessage(appIdElement.GetString(), tokenElement.GetString(), 
-                        $"**Error** {ex.Message}");
+                    await SendFollowUpMessage(applicationId, interactionToken, $"**Error** {ex.Message}");
                 }
-            }
-            catch
-            {
+                catch
+                {
+                }
             }
         }
     }
@@ -691,7 +646,7 @@ public class DiscordBot
         try
         {
             using var httpClient = new HttpClient();
-            var webhookUrl = $"https://discord.com/api/v10/webhooks/{applicationId}/{interactionToken}";
+            var webhookUrl = $"{AppConstants.DiscordApiBaseUrl}/webhooks/{applicationId}/{interactionToken}";
             
             var payload = new
             {
@@ -699,7 +654,7 @@ public class DiscordBot
             };
 
             var json = JsonSerializer.Serialize(payload);
-            var contentData = new StringContent(json, Encoding.UTF8, "application/json");
+            var contentData = new StringContent(json, Encoding.UTF8, AppConstants.ContentTypeJson);
 
             var response = await httpClient.PostAsync(webhookUrl, contentData);
             
@@ -723,34 +678,45 @@ public class DiscordBot
     {
         try
         {
-            var subscriptionId = Environment.GetEnvironmentVariable("SUBSCRIPTION_ID");
-            var resourceGroupName = Environment.GetEnvironmentVariable("RESOURCE_GROUP_NAME");
-            var containerGroupName = Environment.GetEnvironmentVariable("CONTAINER_GROUP_NAME");
+            var subscriptionId = Environment.GetEnvironmentVariable(EnvVars.SubscriptionId);
+            var resourceGroupName = Environment.GetEnvironmentVariable(EnvVars.ResourceGroupName);
+            var containerGroupName = Environment.GetEnvironmentVariable(EnvVars.ContainerGroupName);
 
             if (_armClient == null || string.IsNullOrEmpty(subscriptionId) || string.IsNullOrEmpty(resourceGroupName) || string.IsNullOrEmpty(containerGroupName))
                 return (false, "Azure clients not initialized");
 
             var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
             var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
-            var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
-            var containerGroupResource = containerGroup.Value;
+            
+            ContainerGroupResource containerGroupResource;
+            try
+            {
+                var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
+                containerGroupResource = containerGroup.Value;
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                _logger.LogInformation("Container group does not exist - server is already stopped");
+                return (true, "Server is already stopped!");
+            }
+            
             var containerGroupData = containerGroupResource.Get().Value;
             
-            string? state = null;
+            ContainerState state = ContainerState.Unknown;
             if (containerGroupData.Data.Containers != null && containerGroupData.Data.Containers.Count > 0)
             {
                 var container = containerGroupData.Data.Containers[0];
-                state = container.InstanceView?.CurrentState?.State;
+                state = ContainerStateHelper.ParseContainerState(container.InstanceView?.CurrentState?.State);
             }
             
-            if (state != null && (state.Equals("Stopped", StringComparison.OrdinalIgnoreCase) || state.Equals("Terminated", StringComparison.OrdinalIgnoreCase)))
+            if (state == ContainerState.Stopped || state == ContainerState.Terminated)
                 return (true, "Server is already stopped!");
 
             containerGroupResource.Delete(WaitUntil.Started);
 
             _serverStates[containerGroupName] = new ServerState
             {
-                Status = "stopped",
+                Status = ServerStatus.Stopped,
                 StartedAt = null,
                 AutoShutdownTime = null
             };
