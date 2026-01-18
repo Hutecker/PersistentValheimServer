@@ -295,53 +295,26 @@ public class DiscordBot
             if (containerState == ContainerState.Running)
             {
                 var statusMessage = new StringBuilder();
-                statusMessage.AppendLine("**Server Status: RUNNING**");
+                statusMessage.AppendLine("**Server Status: RUNNING** ✅");
                 statusMessage.AppendLine();
 
-                string? serverIp = null;
-                string? serverFqdn = null;
-                try
+                var joinCode = GetJoinCodeFromLogs();
+                if (!string.IsNullOrEmpty(joinCode))
                 {
-                    var subscriptionId = Environment.GetEnvironmentVariable(EnvVars.SubscriptionId);
-                    var resourceGroupName = Environment.GetEnvironmentVariable(EnvVars.ResourceGroupName);
-                    var containerGroupName = Environment.GetEnvironmentVariable(EnvVars.ContainerGroupName);
-
-                    if (_armClient != null && !string.IsNullOrEmpty(subscriptionId) && 
-                        !string.IsNullOrEmpty(resourceGroupName) && !string.IsNullOrEmpty(containerGroupName))
-                    {
-                        var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
-                        var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
-                        var containerGroup = resourceGroup.GetContainerGroup(containerGroupName);
-                        var containerGroupResource = containerGroup.Value;
-                        var containerGroupData = containerGroupResource.Get().Value;
-                        
-                        var ipAddressData = containerGroupData.Data.IPAddress;
-                        if (ipAddressData != null)
-                        {
-                            serverIp = ipAddressData.IP?.ToString();
-                            serverFqdn = ipAddressData.Fqdn;
-                            
-                            if (string.IsNullOrEmpty(serverIp) && !string.IsNullOrEmpty(serverFqdn))
-                                serverIp = ResolveIpFromFqdn(serverFqdn);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to retrieve IP address for status command");
-                }
-
-                if (!string.IsNullOrEmpty(serverIp))
-                {
-                    statusMessage.AppendLine($"**IP Address:** `{serverIp}`");
-                    statusMessage.AppendLine($"**Connection String:** `{serverIp}:2456`");
+                    statusMessage.AppendLine($"**🎮 Join Code:** `{joinCode}`");
                     statusMessage.AppendLine();
-                    statusMessage.AppendLine("**To Connect:**");
-                    statusMessage.AppendLine("1. In Valheim: Join Game → Join IP");
-                    statusMessage.AppendLine($"2. Enter: `{serverIp}:2456`");
-                    statusMessage.AppendLine("3. Enter your server password");
-                    statusMessage.AppendLine();
+                    statusMessage.AppendLine("**To Connect (PC & Console):**");
+                    statusMessage.AppendLine("1. Enable Crossplay in Valheim settings");
+                    statusMessage.AppendLine("2. Join Game → Join by Code");
+                    statusMessage.AppendLine($"3. Enter: `{joinCode}`");
+                    statusMessage.AppendLine("4. Enter server password");
                 }
+                else
+                {
+                    statusMessage.AppendLine("⏳ *Join code not yet available - server may still be initializing*");
+                    statusMessage.AppendLine("*Try `/valheim status` again in a minute*");
+                }
+                statusMessage.AppendLine();
 
                 if (_serverStates.TryGetValue(stateKey, out var state) && state.StartedAt.HasValue && state.AutoShutdownTime.HasValue)
                 {
@@ -362,7 +335,7 @@ public class DiscordBot
 
             if (containerState == ContainerState.Stopped || containerState == ContainerState.Terminated)
             {
-                return CreateMessageResponse("Server is **STOPPED**\nUse `/valheim start` to start the server.");
+                return CreateMessageResponse("Server is **STOPPED** ⛔\nUse `/valheim start` to start the server.");
             }
 
             return CreateMessageResponse("**Error** Unable to determine server status.\nPlease try again or use `/valheim start` to start the server.");
@@ -489,6 +462,7 @@ public class DiscordBot
                     new ContainerEnvironmentVariable("WORLD_NAME") { Value = AppConstants.DefaultWorldName },
                     new ContainerEnvironmentVariable("SERVER_PASS") { SecureValue = serverPassword },
                     new ContainerEnvironmentVariable("SERVER_PUBLIC") { Value = "1" },
+                    new ContainerEnvironmentVariable("SERVER_ARGS") { Value = "-crossplay" },
                     new ContainerEnvironmentVariable("BACKUPS") { Value = "1" },
                     new ContainerEnvironmentVariable("BACKUPS_RETENTION_DAYS") { Value = "7" },
                     new ContainerEnvironmentVariable("UPDATE_CRON") { Value = "0 4 * * *" }
@@ -626,8 +600,6 @@ public class DiscordBot
             var maxWaitTime = TimeSpan.FromMinutes(5);
             var pollInterval = TimeSpan.FromSeconds(10);
             var startTime = DateTime.UtcNow;
-            string? serverIp = null;
-            string? serverFqdn = null;
 
             _logger.LogInformation("Polling for server to be ready...");
 
@@ -657,16 +629,6 @@ public class DiscordBot
 
                     if (state == ContainerState.Running)
                     {
-                        var ipAddressData = containerGroupData.Data.IPAddress;
-                        if (ipAddressData != null)
-                        {
-                            serverIp = ipAddressData.IP?.ToString();
-                            serverFqdn = ipAddressData.Fqdn;
-                            
-                            if (string.IsNullOrEmpty(serverIp) && !string.IsNullOrEmpty(serverFqdn))
-                                serverIp = ResolveIpFromFqdn(serverFqdn);
-                        }
-
                         var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable(EnvVars.AutoShutdownMinutes) ?? AppConstants.DefaultAutoShutdownMinutes.ToString());
                         var stateKey = containerGroupName;
                         _serverStates[stateKey] = new ServerState
@@ -676,40 +638,38 @@ public class DiscordBot
                             AutoShutdownTime = DateTime.UtcNow.AddMinutes(autoShutdownMinutes)
                         };
 
+                        await SendFollowUpMessage(applicationId, interactionToken, 
+                            "✅ Container is running! Waiting for Valheim server to initialize and generate join code...");
+                        
+                        var joinCode = await WaitForJoinCodeAsync(120);
+                        
                         var readyMessage = new StringBuilder();
-                        readyMessage.AppendLine("**Success! Server is ready!**");
+                        readyMessage.AppendLine("**🎉 Server is ready!**");
                         readyMessage.AppendLine();
                         
-                        if (!string.IsNullOrEmpty(serverFqdn))
+                        if (!string.IsNullOrEmpty(joinCode))
                         {
-                            readyMessage.AppendLine($"**FQDN:** `{serverFqdn}`");
-                        }
-                        
-                        if (!string.IsNullOrEmpty(serverIp))
-                        {
-                            readyMessage.AppendLine($"**IP Address:** `{serverIp}`");
-                            readyMessage.AppendLine($"**Connection String:** `{serverIp}:2456`");
-                        }
-                        
-                        readyMessage.AppendLine();
-                        readyMessage.AppendLine("**To Connect:**");
-                        readyMessage.AppendLine("In Valheim: Join Game → Join IP");
-                        if (!string.IsNullOrEmpty(serverIp))
-                        {
-                            readyMessage.AppendLine($"Enter: `{serverIp}:2456` (IP:PORT format)");
+                            readyMessage.AppendLine($"**🎮 Join Code:** `{joinCode}`");
+                            readyMessage.AppendLine();
+                            readyMessage.AppendLine("**To Connect (PC & Console):**");
+                            readyMessage.AppendLine("1. Enable **Crossplay** in Valheim settings");
+                            readyMessage.AppendLine("2. Join Game → **Join by Code**");
+                            readyMessage.AppendLine($"3. Enter: `{joinCode}`");
+                            readyMessage.AppendLine("4. Enter server password");
                         }
                         else
                         {
-                            readyMessage.AppendLine("Enter: `:2456` (IP:PORT format)");
+                            readyMessage.AppendLine("⚠️ Join code not yet available.");
+                            readyMessage.AppendLine("Use `/valheim status` in a minute to get the join code.");
                         }
-                        readyMessage.AppendLine("Enter your server password");
+                        
                         readyMessage.AppendLine();
-                        readyMessage.AppendLine("⏳ *The server may need 1-2 extra minutes to fully initialize. If connection fails, wait and try again.*");
+                        readyMessage.AppendLine("⏳ *First connection may take 1-2 extra minutes while the world loads.*");
                         readyMessage.AppendLine();
                         readyMessage.AppendLine($"**Auto-shutdown in {autoShutdownMinutes} minutes**");
 
                         await SendFollowUpMessage(applicationId, interactionToken, readyMessage.ToString());
-                        _logger.LogInformation($"Server is ready! IP: {serverIp}");
+                        _logger.LogInformation($"Server is ready! Join code: {joinCode}");
                         return;
                     }
                     else if (state == ContainerState.Failed || state == ContainerState.Stopped)
@@ -860,7 +820,6 @@ public class DiscordBot
             var addresses = Dns.GetHostAddresses(fqdn);
             if (addresses.Length > 0)
             {
-                // Prefer IPv4 address
                 var ipv4 = addresses.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
                 return (ipv4 ?? addresses[0]).ToString();
             }
@@ -868,6 +827,60 @@ public class DiscordBot
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to resolve IP from FQDN: {Fqdn}", fqdn);
+        }
+
+        return null;
+    }
+
+    private string? GetJoinCodeFromLogs()
+    {
+        try
+        {
+            var subscriptionId = Environment.GetEnvironmentVariable(EnvVars.SubscriptionId);
+            var resourceGroupName = Environment.GetEnvironmentVariable(EnvVars.ResourceGroupName);
+            var containerGroupName = Environment.GetEnvironmentVariable(EnvVars.ContainerGroupName);
+
+            if (_armClient == null || string.IsNullOrEmpty(subscriptionId) || 
+                string.IsNullOrEmpty(resourceGroupName) || string.IsNullOrEmpty(containerGroupName))
+                return null;
+
+            var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
+            var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
+            var containerGroup = resourceGroup.GetContainerGroup(containerGroupName).Value;
+            
+            var logs = containerGroup.GetContainerLogs(AppConstants.ContainerName, tail: 500);
+            
+            if (logs?.Value?.Content == null)
+                return null;
+
+            var logContent = logs.Value.Content;
+            var match = System.Text.RegularExpressions.Regex.Match(logContent, @"registered with join code (\d+)");
+            
+            if (match.Success)
+                return match.Groups[1].Value;
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to retrieve join code from container logs");
+            return null;
+        }
+    }
+
+    private async Task<string?> WaitForJoinCodeAsync(int maxWaitSeconds = 120)
+    {
+        var pollInterval = TimeSpan.FromSeconds(5);
+        var startTime = DateTime.UtcNow;
+        var maxWaitTime = TimeSpan.FromSeconds(maxWaitSeconds);
+
+        while (DateTime.UtcNow - startTime < maxWaitTime)
+        {
+            var joinCode = GetJoinCodeFromLogs();
+            if (!string.IsNullOrEmpty(joinCode))
+                return joinCode;
+            
+            await Task.Delay(pollInterval);
         }
 
         return null;
