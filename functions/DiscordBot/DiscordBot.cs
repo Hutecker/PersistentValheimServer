@@ -682,7 +682,7 @@ public class DiscordBot
                         
                         if (!string.IsNullOrEmpty(serverFqdn))
                         {
-                            readyMessage.AppendLine($"**FQDN:** `{serverFqdn}` (may not work in Valheim)");
+                            readyMessage.AppendLine($"**FQDN:** `{serverFqdn}`");
                         }
                         
                         if (!string.IsNullOrEmpty(serverIp))
