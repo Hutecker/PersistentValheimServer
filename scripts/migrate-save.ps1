@@ -69,7 +69,7 @@ if (-not $storageKey) {
 }
 
 Write-Host "Checking for existing world..." -ForegroundColor Yellow
-$worldPath = "worlds/$WorldName"
+$worldPath = "worlds_local"
 $existingDb = az storage file exists `
     --account-name $StorageAccountName `
     --account-key $storageKey `
@@ -156,14 +156,7 @@ az storage directory create `
     --account-name $StorageAccountName `
     --account-key $storageKey `
     --share-name $FileShareName `
-    --name "worlds" `
-    --output none 2>$null
-
-az storage directory create `
-    --account-name $StorageAccountName `
-    --account-key $storageKey `
-    --share-name $FileShareName `
-    --name $worldPath `
+    --name "worlds_local" `
     --output none 2>$null
 
 Write-Host "Uploading world files..." -ForegroundColor Yellow
