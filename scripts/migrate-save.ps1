@@ -106,6 +106,13 @@ if ($worldExists) {
         --account-name $StorageAccountName `
         --account-key $storageKey `
         --share-name $FileShareName `
+        --name "backups" `
+        --output none 2>$null
+    
+    az storage directory create `
+        --account-name $StorageAccountName `
+        --account-key $storageKey `
+        --share-name $FileShareName `
         --name "backups/migration-backup-$timestamp" `
         --output none 2>$null
     
@@ -120,8 +127,9 @@ if ($worldExists) {
         az storage file copy start `
             --account-name $StorageAccountName `
             --account-key $storageKey `
-            --share-name $FileShareName `
+            --source-share $FileShareName `
             --source-path "$worldPath/$WorldName.db" `
+            --destination-share $FileShareName `
             --destination-path "$backupPath/$WorldName.db" `
             --output none 2>$null
         Write-Host "  Backed up: $WorldName.db" -ForegroundColor Gray
@@ -131,8 +139,9 @@ if ($worldExists) {
         az storage file copy start `
             --account-name $StorageAccountName `
             --account-key $storageKey `
-            --share-name $FileShareName `
+            --source-share $FileShareName `
             --source-path "$worldPath/$WorldName.fwl" `
+            --destination-share $FileShareName `
             --destination-path "$backupPath/$WorldName.fwl" `
             --output none 2>$null
         Write-Host "  Backed up: $WorldName.fwl" -ForegroundColor Gray
@@ -143,6 +152,13 @@ if ($worldExists) {
 }
 
 Write-Host "Creating world directory structure..." -ForegroundColor Yellow
+az storage directory create `
+    --account-name $StorageAccountName `
+    --account-key $storageKey `
+    --share-name $FileShareName `
+    --name "worlds" `
+    --output none 2>$null
+
 az storage directory create `
     --account-name $StorageAccountName `
     --account-key $storageKey `
