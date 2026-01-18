@@ -320,6 +320,9 @@ public class DiscordBot
                         {
                             serverIp = ipAddressData.IP?.ToString();
                             serverFqdn = ipAddressData.Fqdn;
+                            
+                            if (string.IsNullOrEmpty(serverIp) && !string.IsNullOrEmpty(serverFqdn))
+                                serverIp = ResolveIpFromFqdn(serverFqdn);
                         }
                     }
                 }
@@ -346,7 +349,7 @@ public class DiscordBot
                     if (timeRemaining.TotalSeconds > 0)
                     {
                         var mins = (int)timeRemaining.TotalMinutes;
-                        statusMessage.AppendLine($"Auto-shutdown in {mins} minutes");
+                        statusMessage.AppendLine($"**Auto-shutdown in {mins} minutes**");
                     }
                     else
                     {
@@ -659,6 +662,9 @@ public class DiscordBot
                         {
                             serverIp = ipAddressData.IP?.ToString();
                             serverFqdn = ipAddressData.Fqdn;
+                            
+                            if (string.IsNullOrEmpty(serverIp) && !string.IsNullOrEmpty(serverFqdn))
+                                serverIp = ResolveIpFromFqdn(serverFqdn);
                         }
 
                         var autoShutdownMinutes = int.Parse(Environment.GetEnvironmentVariable(EnvVars.AutoShutdownMinutes) ?? AppConstants.DefaultAutoShutdownMinutes.ToString());
@@ -674,26 +680,31 @@ public class DiscordBot
                         readyMessage.AppendLine("**Success! Server is ready!**");
                         readyMessage.AppendLine();
                         
+                        if (!string.IsNullOrEmpty(serverFqdn))
+                        {
+                            readyMessage.AppendLine($"**FQDN:** `{serverFqdn}` (may not work in Valheim)");
+                        }
+                        
                         if (!string.IsNullOrEmpty(serverIp))
                         {
                             readyMessage.AppendLine($"**IP Address:** `{serverIp}`");
                             readyMessage.AppendLine($"**Connection String:** `{serverIp}:2456`");
                         }
                         
-                        if (!string.IsNullOrEmpty(serverFqdn))
-                        {
-                            readyMessage.AppendLine($"**FQDN:** `{serverFqdn}` (may not work in Valheim)");
-                        }
-                        
                         readyMessage.AppendLine();
                         readyMessage.AppendLine("**To Connect:**");
-                        readyMessage.AppendLine("1. In Valheim: Join Game → Join IP");
-                        readyMessage.AppendLine($"2. Enter: `{serverIp}:2456` (IP:PORT format)");
-                        readyMessage.AppendLine("3. Enter your server password");
+                        readyMessage.AppendLine("In Valheim: Join Game → Join IP");
+                        if (!string.IsNullOrEmpty(serverIp))
+                        {
+                            readyMessage.AppendLine($"Enter: `{serverIp}:2456` (IP:PORT format)");
+                        }
+                        else
+                        {
+                            readyMessage.AppendLine("Enter: `:2456` (IP:PORT format)");
+                        }
+                        readyMessage.AppendLine("Enter your server password");
                         readyMessage.AppendLine();
-                        readyMessage.AppendLine("**Note:** If connection fails, wait 1-2 more minutes for server to fully initialize.");
-                        readyMessage.AppendLine();
-                        readyMessage.AppendLine($"Auto-shutdown in {autoShutdownMinutes} minutes");
+                        readyMessage.AppendLine($"**Auto-shutdown in {autoShutdownMinutes} minutes**");
 
                         await SendFollowUpMessage(applicationId, interactionToken, readyMessage.ToString());
                         _logger.LogInformation($"Server is ready! IP: {serverIp}");
@@ -835,5 +846,28 @@ public class DiscordBot
         var bytes = Encoding.UTF8.GetBytes(input);
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash).ToLower();
+    }
+
+    private string? ResolveIpFromFqdn(string? fqdn)
+    {
+        if (string.IsNullOrEmpty(fqdn))
+            return null;
+
+        try
+        {
+            var addresses = Dns.GetHostAddresses(fqdn);
+            if (addresses.Length > 0)
+            {
+                // Prefer IPv4 address
+                var ipv4 = addresses.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+                return (ipv4 ?? addresses[0]).ToString();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve IP from FQDN: {Fqdn}", fqdn);
+        }
+
+        return null;
     }
 }
