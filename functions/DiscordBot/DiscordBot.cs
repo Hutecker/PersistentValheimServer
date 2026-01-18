@@ -704,6 +704,8 @@ public class DiscordBot
                         }
                         readyMessage.AppendLine("Enter your server password");
                         readyMessage.AppendLine();
+                        readyMessage.AppendLine("⏳ *The server may need 1-2 extra minutes to fully initialize. If connection fails, wait and try again.*");
+                        readyMessage.AppendLine();
                         readyMessage.AppendLine($"**Auto-shutdown in {autoShutdownMinutes} minutes**");
 
                         await SendFollowUpMessage(applicationId, interactionToken, readyMessage.ToString());
