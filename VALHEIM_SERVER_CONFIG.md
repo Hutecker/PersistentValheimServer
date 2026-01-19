@@ -23,9 +23,18 @@ We use the `lloesche/valheim-server` Docker image, which is a popular, well-main
 | `WORLD_NAME` | World save name | `Dedicated` | Default, can be changed |
 | `SERVER_PASS` | Server password | From Key Vault | Secure storage |
 | `SERVER_PUBLIC` | Public listing | `1` | Set to 1 for public server |
+| `SERVER_ARGS` | Server launch args | `-crossplay` | Enables PC & Console crossplay |
 | `BACKUPS` | Enable backups | `1` | Automatic backups enabled |
 | `BACKUPS_RETENTION_DAYS` | Backup retention | `7` | Keep 7 days of backups |
 | `UPDATE_CRON` | Auto-update schedule | `0 4 * * *` | Daily at 4 AM UTC |
+
+### Crossplay Configuration
+
+The server is configured with `-crossplay` flag which:
+- Enables cross-platform play (PC Steam, PC Game Pass, Xbox)
+- Uses PlayFab backend instead of Steam-only networking
+- Generates a 6-digit **Join Code** for easy connections
+- Allows both PC and console players to join using the same code
 
 ### Port Configuration
 
@@ -40,12 +49,14 @@ All ports are correctly configured in our container group.
 
 - **Mount Point**: `/config` (container path)
 - **Azure File Share**: `valheim-worlds`
-- **World Save Location**: `/config/worlds/{WORLD_NAME}/`
+- **World Save Location**: `/config/worlds_local/` (files directly in this folder)
 - **Backup Location**: `/config/backups/`
 
 World saves are stored as:
-- `{WORLD_NAME}.db` - World data
-- `{WORLD_NAME}.fwl` - World metadata
+- `worlds_local/{WORLD_NAME}.db` - World data
+- `worlds_local/{WORLD_NAME}.fwl` - World metadata
+
+**Note:** With crossplay enabled, the Valheim server stores saves directly in `worlds_local/` rather than in world-name subdirectories.
 
 ## Server Requirements
 
@@ -114,26 +125,34 @@ Beyond official requirements, we've added:
 
 ## Troubleshooting
 
-### Server Not Appearing in Browser
+### Cannot Get Join Code
 
-1. Verify `SERVER_PUBLIC=1` is set
-2. Check ports 2456-2458 UDP are accessible
-3. Ensure server has been running for at least 1-2 minutes
-4. Try connecting via IP address instead
+1. Run `/valheim status` in Discord to get the current join code
+2. Check container logs in Azure Portal for "registered with join code" message
+3. Ensure server has been running for at least 2-3 minutes
+4. The join code changes each time the server starts
 
 ### World Not Loading
 
-1. Verify world files exist in `/config/worlds/{WORLD_NAME}/`
+1. Verify world files exist in `/config/worlds_local/` directory
 2. Check file permissions (should be readable by container)
 3. Ensure both `.db` and `.fwl` files are present
 4. Check container logs for errors
 
 ### Connection Issues
 
-1. Verify public IP is accessible
-2. Check firewall rules allow UDP ports 2456-2458
-3. Test connection from Valheim game client
-4. Check server logs for connection attempts
+1. **Enable Crossplay:** Ensure Crossplay is enabled in your Valheim settings
+2. Use **Join by Code** (not Join by IP) with the 6-digit join code
+3. Verify the join code is current (get fresh code from `/valheim status`)
+4. Wait 3-5 minutes after server start for full initialization
+5. Check container logs for PlayFab registration status
+
+### Console Players Cannot Connect
+
+1. Verify `-crossplay` is in `SERVER_ARGS` environment variable
+2. Ensure console players have Crossplay enabled in their settings
+3. Console players must use Join by Code (not IP address)
+4. Verify all players are on the same Valheim version
 
 ## References
 

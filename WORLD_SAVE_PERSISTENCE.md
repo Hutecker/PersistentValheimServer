@@ -1,4 +1,4 @@
-c# World Save Data Persistence
+# World Save Data Persistence
 
 This document explains how world save data is persisted and protected from data loss.
 
@@ -12,7 +12,7 @@ This document explains how world save data is persisted and protected from data 
 
 ### Container Configuration
 - **Mount Point**: `/config` → Azure File Share
-- **World Save Location**: `/config/worlds/{WORLD_NAME}/`
+- **World Save Location**: `/config/worlds_local/` (files named `{WORLD_NAME}.db` and `{WORLD_NAME}.fwl`)
 - **Backup Location**: `/config/backups/` (automatic, 7-day retention)
 - **World Name**: `Dedicated` (default, configurable via `WORLD_NAME` env var)
 
@@ -21,13 +21,14 @@ This document explains how world save data is persisted and protected from data 
 Container Instance
     ↓ (mounts)
 Azure File Share (valheim-worlds)
-    ├── worlds/
-    │   └── Dedicated/
-    │       ├── Dedicated.db (world data)
-    │       └── Dedicated.fwl (world metadata)
+    ├── worlds_local/
+    │   ├── Dedicated.db (world data)
+    │   └── Dedicated.fwl (world metadata)
     └── backups/
         └── [timestamped backups]
 ```
+
+**Note:** The Valheim server with crossplay enabled stores saves directly in `worlds_local/` (not in a subdirectory).
 
 ## Persistence Guarantees
 
@@ -110,7 +111,7 @@ The migration script (`scripts/migrate-save.ps1`) includes:
 ### World Not Appearing After Migration
 1. **Check World Name**: Ensure `WORLD_NAME` matches your world file names
 2. **Verify File Names**: Files must be named `{WORLD_NAME}.db` and `{WORLD_NAME}.fwl`
-3. **Check File Location**: Files must be in `worlds/{WORLD_NAME}/` directory
+3. **Check File Location**: Files must be in `worlds_local/` directory (not a subdirectory)
 4. **Review Container Logs**: Check Application Insights for errors
 
 ### Data Loss Concerns

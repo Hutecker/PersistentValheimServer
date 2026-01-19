@@ -59,11 +59,12 @@ This solution provides a cost-effective, Discord-controlled Valheim dedicated se
 **Purpose**: Hosts the Valheim dedicated server
 
 **Configuration**:
-- Image: `lloesche/valheim-server:latest`
+- Image: `lloesche/valheim-server:latest` (from Azure Container Registry)
 - Resources: 2 CPU cores, 4 GB RAM
 - Ports: 2456-2458 UDP
 - Restart Policy: Never (controlled via Discord)
 - Storage: Azure File Share mounted at `/config`
+- Crossplay: Enabled via `SERVER_ARGS=-crossplay` (PC + Console support)
 
 **Cost**: ~$0.10-0.15/hour when running, $0 when stopped
 
@@ -129,10 +130,12 @@ This solution provides a cost-effective, Discord-controlled Valheim dedicated se
 3. DiscordBot function:
    - Reads secrets from environment variables (resolved from Key Vault references)
    - Gets storage account key via Azure SDK
-   - Creates container group via Azure SDK
-   - Returns confirmation message
+   - Creates container group via Azure SDK (with `-crossplay` flag)
+   - Returns deferred response, starts polling
 4. Container starts (1-3 minutes)
-5. Server becomes available
+5. Function polls container logs for join code
+6. Server registers with PlayFab and generates 6-digit join code
+7. Function sends Discord follow-up with join code and connection instructions
 
 ### Stopping the Server
 

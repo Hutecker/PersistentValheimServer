@@ -5,10 +5,10 @@ A cost-effective, Discord-controlled Valheim dedicated server hosted on Azure.
 ## Architecture Overview
 
 This solution uses:
-- **Azure Container Instances (ACI)** - Runs the Valheim server on-demand (only pay when running)
+- **Azure Container Instances (ACI)** - Runs the Valheim server on-demand with crossplay enabled (only pay when running)
 - **Azure Container Registry (ACR)** - Hosts the Valheim Docker image (avoids Docker Hub rate limits)
 - **Azure File Share** - Persistent storage for world saves
-- **Azure Functions** - Discord bot integration and auto-shutdown logic
+- **Azure Functions** - Discord bot integration, auto-shutdown logic, and join code retrieval
 - **Azure Key Vault** - Secure storage for secrets (Discord token, server password)
 
 ### Cost Optimization Strategy
@@ -21,12 +21,14 @@ This solution uses:
 
 ## Features
 
-[OK] Discord channel control (start/stop server)  
-[OK] Automatic shutdown after inactivity  
-[OK] Persistent world saves  
-[OK] Save migration support  
-[OK] Infrastructure as Code (Bicep)  
-[OK] Cost-optimized for 5 players  
+✅ Discord channel control (start/stop server)  
+✅ Automatic shutdown after inactivity  
+✅ Persistent world saves  
+✅ Save migration support  
+✅ Infrastructure as Code (Bicep)  
+✅ Cost-optimized for 5 players  
+✅ **Crossplay support** (PC Steam, PC Game Pass, Xbox)  
+✅ Easy connection via **Join Code** (no IP configuration needed)  
 
 ## Prerequisites
 
@@ -194,56 +196,63 @@ Run:
 ### 5. Usage
 
 In your Discord channel:
-- `/valheim start` - Start the server
-- `/valheim stop` - Stop the server
-- `/valheim status` - Check server status
+- `/valheim start` - Start the server (provides join code when ready)
+- `/valheim stop` - Stop the server (saves world automatically)
+- `/valheim status` - Check server status and get current join code
 
 The server will automatically shut down after the configured timeout (default: 12 hours).
 
 ### 6. Connecting to the Server
 
-Once the server is started, the Discord bot will send you the connection information:
+Once the server is started, the Discord bot will provide a **Join Code** for easy connection.
 
-**Connection Details:**
-- **IP Address**: The public IP address (e.g., `20.123.45.67`)
-- **FQDN**: The fully qualified domain name (e.g., `valheim-1a2b3c4d.eastus.azurecontainer.io`)
+**Crossplay Support:**
+This server uses the `-crossplay` flag, enabling connections from:
+- **PC (Steam)**
+- **PC (Microsoft Store/Game Pass)**
+- **Xbox**
+- **PlayStation** (when available)
 
 **To Connect in Valheim:**
 
-1. **Using the Server Browser (Recommended):**
-   - Open Valheim
-   - Click "Join Game"
-   - Click "Join IP"
-   - Enter the connection string in format: `IP_ADDRESS:2456`
-     - Example: `20.123.45.67:2456`
-     - **Important:** You MUST include the port `:2456` in the IP field
-   - Enter the server password (configured during deployment)
-   - Click "Connect"
+1. **Enable Crossplay** in your Valheim settings (required for join code)
+2. Open Valheim
+3. Click **"Join Game"**
+4. Click **"Join by Code"**
+5. Enter the **6-digit Join Code** from the Discord bot (e.g., `821680`)
+6. Enter the server password
+7. Click **"Connect"**
 
-2. **Using Console Command:**
-   - In Valheim, press `F5` to open the console
-   - Type: `connect <IP_ADDRESS>:2456`
-   - Example: `connect 20.123.45.67:2456`
-   - Enter the password when prompted
+**Discord Bot Output:**
+When you run `/valheim start` or `/valheim status`, the bot will show:
+```
+🎮 Join Code: 821680
+
+To Connect (PC & Console):
+1. Enable Crossplay in Valheim settings
+2. Join Game → Join by Code
+3. Enter: 821680
+4. Enter server password
+```
 
 **Important Notes:**
-- **Port Format:** Always use `IP:2456` format (e.g., `20.123.45.67:2456`)
-- **FQDN:** Valheim typically doesn't accept FQDN/domain names - use the IP address only
+- **Crossplay Required:** You must enable Crossplay in Valheim settings to use join codes
 - **Wait Time:** The server may take 3-5 minutes to fully initialize after container starts
+- **Join Code Changes:** A new join code is generated each time the server starts
 - If connection fails, wait 1-2 more minutes and try again
 
-**Server Ports:**
-- Primary port: `2456` (UDP) - **Use this for connections**
-- Additional ports: `2457`, `2458` (UDP) - used automatically by game
+**Server Ports (for reference):**
+- Ports `2456`, `2457`, `2458` (UDP) are exposed for game traffic
+- With crossplay, connections route through PlayFab relay servers
 
 **Troubleshooting Connection Issues:**
 
 If you get "Failed to connect":
-1. **Wait longer:** Server may need 3-5 minutes to fully initialize
-2. **Check format:** Ensure you're using `IP:2456` format (not just IP)
-3. **Verify server status:** Run `/valheim status` in Discord to confirm server is running
-4. **Check container logs:** In Azure Portal → Container Instance → Logs to see if server started properly
-5. **Try console command:** Use `F5` console with `connect IP:2456` instead of Join IP button
+1. **Enable Crossplay:** Ensure Crossplay is enabled in Valheim settings
+2. **Wait longer:** Server may need 3-5 minutes to fully initialize
+3. **Get fresh code:** Run `/valheim status` to get the current join code
+4. **Verify server status:** Confirm server is running in Discord
+5. **Check container logs:** In Azure Portal → Container Instance → Logs
 
 ## Project Structure
 

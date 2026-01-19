@@ -215,7 +215,7 @@ public class DiscordBot
             return subcommand switch
             {
                 AppConstants.StartSubcommand => await HandleStartCommandAsync(data),
-                AppConstants.StopSubcommand => HandleStopCommand(),
+                AppConstants.StopSubcommand => await HandleStopCommandAsync(data),
                 AppConstants.StatusSubcommand => HandleStatusCommand(),
                 _ => CreateMessageResponse("Unknown subcommand")
             };
@@ -271,17 +271,68 @@ public class DiscordBot
         }
     }
 
-    private object HandleStopCommand()
+    private async Task<object> HandleStopCommandAsync(JsonElement interactionData)
     {
         try
         {
-            var (success, message) = StopServer();
-            return CreateMessageResponse(message, success ? DiscordMessageFlags.None : DiscordMessageFlags.Ephemeral);
+            if (!interactionData.TryGetProperty("token", out var tokenElement) ||
+                !interactionData.TryGetProperty("application_id", out var appIdElement))
+            {
+                return CreateMessageResponse("**Error** Missing interaction data", DiscordMessageFlags.Ephemeral);
+            }
+
+            var interactionToken = tokenElement.GetString();
+            var applicationId = appIdElement.GetString();
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await StopServerAndNotify(applicationId, interactionToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in background server stop task");
+                    await SendFollowUpMessage(applicationId, interactionToken, $"**Error** {ex.Message}");
+                }
+            });
+
+            return CreateDeferredResponse();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in stop command");
-            return CreateMessageResponse($"Error stopping server: {ex.Message}", DiscordMessageFlags.Ephemeral);
+            return CreateMessageResponse($"**Error** Error stopping server: {ex.Message}", DiscordMessageFlags.Ephemeral);
+        }
+    }
+
+    private async Task StopServerAndNotify(string? applicationId, string? interactionToken)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(applicationId) || string.IsNullOrEmpty(interactionToken))
+            {
+                _logger.LogError("Missing interaction token or application ID for stop command");
+                return;
+            }
+
+            var (success, message) = StopServer();
+            await SendFollowUpMessage(applicationId, interactionToken, message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in StopServerAndNotify");
+
+            if (!string.IsNullOrEmpty(applicationId) && !string.IsNullOrEmpty(interactionToken))
+            {
+                try
+                {
+                    await SendFollowUpMessage(applicationId, interactionToken, $"**Error** {ex.Message}");
+                }
+                catch
+                {
+                }
+            }
         }
     }
 
@@ -756,7 +807,7 @@ public class DiscordBot
             var containerGroupName = Environment.GetEnvironmentVariable(EnvVars.ContainerGroupName);
 
             if (_armClient == null || string.IsNullOrEmpty(subscriptionId) || string.IsNullOrEmpty(resourceGroupName) || string.IsNullOrEmpty(containerGroupName))
-                return (false, "Azure clients not initialized");
+                return (false, "**Error** Azure clients not initialized");
 
             var subscription = _armClient.GetSubscriptionResource(SubscriptionResource.CreateResourceIdentifier(subscriptionId));
             var resourceGroup = subscription.GetResourceGroup(resourceGroupName).Value;
@@ -770,7 +821,7 @@ public class DiscordBot
             catch (RequestFailedException ex) when (ex.Status == 404)
             {
                 _logger.LogInformation("Container group does not exist - server is already stopped");
-                return (true, "Server is already stopped!");
+                return (true, "⛔ Server is already stopped.");
             }
             
             var containerGroupData = containerGroupResource.Get().Value;
@@ -783,9 +834,9 @@ public class DiscordBot
             }
             
             if (state == ContainerState.Stopped || state == ContainerState.Terminated)
-                return (true, "Server is already stopped!");
+                return (true, "⛔ Server is already stopped.");
 
-            containerGroupResource.Delete(WaitUntil.Started);
+            containerGroupResource.Delete(WaitUntil.Completed);
 
             _serverStates[containerGroupName] = new ServerState
             {
@@ -794,12 +845,12 @@ public class DiscordBot
                 AutoShutdownTime = null
             };
 
-            return (true, "Server is shutting down...");
+            return (true, "✅ **Server has been stopped.**\n\nUse `/valheim start` to start again.");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error stopping server");
-            return (false, $"Error stopping server: {ex.Message}");
+            return (false, $"**Error** Error stopping server: {ex.Message}");
         }
     }
 
